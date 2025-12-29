@@ -46,6 +46,11 @@ async def on_ready():
     # 4. AUTO-SYNC SLASH COMMANDS
     print("\n🔄 Đồng bộ hóa slash commands...")
     try:
+        # Xóa toàn bộ slash commands cũ để force refresh
+        await bot.tree.clear_commands(sync_to_guild=None)
+        await bot.tree.sync()
+        
+        # Đồng bộ hóa lại slash commands mới
         synced = await bot.tree.sync()
         print(f"✅ Đã đồng bộ {len(synced)} slash commands!")
         for cmd in synced:
