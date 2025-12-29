@@ -1,0 +1,8 @@
+{
+    "name": "Abandoned Asylum",
+    "description": "A derelict asylum where the whispers of former patients still echo through the halls.",
+    "min_floors": 2,
+    "max_floors": 4,
+    "min_rooms_per_floor": 8,
+    "max_rooms_per_floor": 15
+}

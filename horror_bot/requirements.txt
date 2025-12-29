@@ -1,0 +1,5 @@
+discord.py
+python-dotenv
+aiosqlite
+llama-cpp-python
+huggingface-hub

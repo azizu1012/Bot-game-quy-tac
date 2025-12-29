@@ -1,0 +1,35 @@
+[
+    {
+        "id": "police",
+        "name": "Police Officer",
+        "description": "Trained for combat, you have higher accuracy.",
+        "stats": {
+            "hp": 100,
+            "sanity": 80,
+            "agi": 50,
+            "acc": 70
+        }
+    },
+    {
+        "id": "athlete",
+        "name": "Athlete",
+        "description": "You are fast and agile, making it easier to flee.",
+        "stats": {
+            "hp": 110,
+            "sanity": 100,
+            "agi": 70,
+            "acc": 50
+        }
+    },
+    {
+        "id": "doctor",
+        "name": "Doctor",
+        "description": "Your medical knowledge gives you a higher starting sanity.",
+        "stats": {
+            "hp": 100,
+            "sanity": 120,
+            "agi": 50,
+            "acc": 50
+        }
+    }
+]

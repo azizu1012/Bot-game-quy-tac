@@ -1,0 +1,8 @@
+{
+    "name": "Cursed Hotel",
+    "description": "A once luxurious hotel, now abandoned and rumored to be haunted.",
+    "min_floors": 3,
+    "max_floors": 5,
+    "min_rooms_per_floor": 5,
+    "max_rooms_per_floor": 10
+}
