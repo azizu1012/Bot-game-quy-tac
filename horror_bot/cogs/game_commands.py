@@ -13,8 +13,8 @@ class GameCommands(commands.Cog):
         self.bot = bot
         self.db_ready = False
 
-    @app_commands.command(name="newgame", description="Starts a new horror RPG game in this channel.")
-    @app_commands.describe(scenario="Choose the scenario for the game.")
+    @app_commands.command(name="newgame", description="Bắt đầu một trò chơi kinh dị mới trong kênh này.")
+    @app_commands.describe(scenario="Chọn kịch bản cho trò chơi.")
     @app_commands.choices(scenario=[
         app_commands.Choice(name="Cursed Hotel", value="hotel"),
         app_commands.Choice(name="Abandoned Asylum", value="hospital"),
@@ -24,67 +24,72 @@ class GameCommands(commands.Cog):
         host_id = interaction.user.id
 
         if await db_manager.execute_query("SELECT 1 FROM active_games WHERE channel_id = ? AND is_active = 1", (game_id,), fetchone=True):
-            await interaction.response.send_message("A game is already active in this channel. Use `/endgame` to stop it.", ephemeral=True)
+            await interaction.response.send_message("Một trò chơi đang hoạt động trong kênh này. Sử dụng `/endgame` để dừng nó.", ephemeral=True)
             return
 
-        await interaction.response.send_message(f"A new game of **{scenario.name}** is starting! Type `/join` to enter.", ephemeral=False)
+        # Xóa game cũ nếu có
+        await db_manager.execute_query("DELETE FROM players WHERE game_id = ?", (game_id,), commit=True)
+        await db_manager.execute_query("DELETE FROM game_maps WHERE game_id = ?", (game_id,), commit=True)
+        await db_manager.execute_query("DELETE FROM active_games WHERE channel_id = ?", (game_id,), commit=True)
 
         scenario_file = f"data/scenarios/{scenario.value}.json"
         game_map = map_generator.generate_map_structure(scenario_file)
         if not game_map:
-            await interaction.followup.send("Error: Could not generate the game map.", ephemeral=True)
+            await interaction.response.send_message("Lỗi: Không thể tạo bản đồ trò chơi.", ephemeral=True)
             return
         
         await db_manager.execute_query(
-            "INSERT OR REPLACE INTO active_games (channel_id, host_id, scenario_type) VALUES (?, ?, ?)",
+            "INSERT INTO active_games (channel_id, host_id, scenario_type, is_active, current_turn) VALUES (?, ?, ?, 1, 1)",
             (game_id, host_id, scenario.value), commit=True
         )
         await db_manager.execute_query(
-            "INSERT OR REPLACE INTO game_maps (game_id, map_data) VALUES (?, ?)",
-            (game_id, json.dumps(game_map.to_dict())), commit=True  # Use to_dict()
+            "INSERT INTO game_maps (game_id, map_data) VALUES (?, ?)",
+            (game_id, json.dumps(game_map.to_dict())), commit=True
         )
 
         await self.add_player_to_game(host_id, game_id, game_map.start_node_id)
         
+        await interaction.response.send_message(f"🎮 **Trò chơi {scenario.name} bắt đầu!**\n👤 Người dẫn dắt: <@{host_id}>\n💀 Gõ `/join` để tham gia vào thế giới kinh dị này...", ephemeral=False)
+        
         turn_manager = game_engine.game_manager.get_manager(game_id, publish_callback=self.publish_turn_results)
         await turn_manager.start_turn()
 
-        message = await self.update_dashboard(interaction.channel, scene_description="The adventure begins...")
+        message = await self.update_dashboard(interaction.channel, scene_description="Cuộc phiêu lưu bắt đầu...")
         if message:
             await db_manager.execute_query(
                 "UPDATE active_games SET dashboard_message_id = ? WHERE channel_id = ?",
                 (message.id, game_id), commit=True
             )
 
-    @app_commands.command(name="join", description="Joins the currently active game.")
+    @app_commands.command(name="join", description="Tham gia trò chơi đang hoạt động hiện tại.")
     async def join_game(self, interaction: discord.Interaction):
         game_id = interaction.channel_id
         user_id = interaction.user.id
 
         game = await db_manager.execute_query("SELECT 1 FROM active_games WHERE channel_id = ? AND is_active = 1", (game_id,), fetchone=True)
         if not game:
-            await interaction.response.send_message("There is no active game in this channel.", ephemeral=True)
+            await interaction.response.send_message("Không có trò chơi nào đang hoạt động trong kênh này.", ephemeral=True)
             return
 
         if await db_manager.execute_query("SELECT 1 FROM players WHERE user_id = ? AND game_id = ?", (user_id, game_id), fetchone=True):
-            await interaction.response.send_message("You are already in this game.", ephemeral=True)
+            await interaction.response.send_message("Bạn đã tham gia trò chơi này rồi.", ephemeral=True)
             return
 
         game_map_data = await db_manager.execute_query("SELECT map_data FROM game_maps WHERE game_id = ?", (game_id,), fetchone=True)
         if not game_map_data or not game_map_data['map_data']:
-             await interaction.response.send_message("Error: Couldn't load map data for this game.", ephemeral=True)
+             await interaction.response.send_message("Lỗi: Không thể tải dữ liệu bản đồ cho trò chơi này.", ephemeral=True)
              return
 
         map_nodes = json.loads(game_map_data['map_data'])
-        start_node_id = list(map_nodes.keys())[0] if map_nodes else None
+        start_node_id = list(map_nodes.get('nodes', {}).keys())[0] if map_nodes.get('nodes') else None
         
         if not start_node_id:
-             await interaction.response.send_message("Error: Game map is corrupted or empty.", ephemeral=True)
+             await interaction.response.send_message("Lỗi: Bản đồ trò chơi bị hỏng hoặc trống.", ephemeral=True)
              return
 
         await self.add_player_to_game(user_id, game_id, start_node_id)
-        await interaction.response.send_message(f"{interaction.user.mention} has joined the game!", ephemeral=False)
-        await self.update_dashboard(interaction.channel, scene_description=f"{interaction.user.display_name} has entered the fray...")
+        await interaction.response.send_message(f"✅ {interaction.user.mention} đã tham gia trò chơi!", ephemeral=False)
+        await self.update_dashboard(interaction.channel, scene_description=f"👤 {interaction.user.display_name} bước vào thế giới u tối...")
 
     async def add_player_to_game(self, user_id, game_id, start_location_id):
         background_id = "athlete"
@@ -99,7 +104,7 @@ class GameCommands(commands.Cog):
         full_description = f"{summary}\n\n" + "\n".join(f"- {event}" for event in turn_events)
         await self.update_dashboard(channel, scene_description=full_description)
 
-    async def update_dashboard(self, channel: discord.TextChannel, scene_description: str = "The situation is tense...") -> discord.Message | None:
+    async def update_dashboard(self, channel: discord.TextChannel, scene_description: str = "Tình hình căng thẳng...") -> discord.Message | None:
         game = await db_manager.execute_query("SELECT * FROM active_games WHERE channel_id = ? AND is_active = 1", (channel.id,), fetchone=True)
         if not game: return
 

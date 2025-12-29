@@ -10,21 +10,21 @@ class ActionView(discord.ui.View):
         super().__init__(timeout=None) # Persistent view
         self.game_id = game_id
 
-    @discord.ui.button(label="⚔️ Attack", style=discord.ButtonStyle.danger, custom_id="attack_button")
+    @discord.ui.button(label="⚔️ Tấn Công", style=discord.ButtonStyle.danger, custom_id="attack_button")
     async def attack(self, interaction: discord.Interaction, button: discord.ui.Button):
         # Acknowledge the action ephemerally
-        await interaction.response.send_message("You chose to Attack! Waiting for others...", ephemeral=True)
+        await interaction.response.send_message("Bạn chọn Tấn Công! Đang chờ người chơi khác...", ephemeral=True)
         # Register the action with the game engine
         await game_engine.register_action(interaction.user.id, self.game_id, "attack")
 
-    @discord.ui.button(label="🏃 Flee", style=discord.ButtonStyle.secondary, custom_id="flee_button")
+    @discord.ui.button(label="🏃 Chạy Trốn", style=discord.ButtonStyle.secondary, custom_id="flee_button")
     async def flee(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("You chose to Flee! Waiting for others...", ephemeral=True)
+        await interaction.response.send_message("Bạn chọn Chạy Trốn! Đang chờ người chơi khác...", ephemeral=True)
         await game_engine.register_action(interaction.user.id, self.game_id, "flee")
 
-    @discord.ui.button(label="🔍 Search", style=discord.ButtonStyle.primary, custom_id="search_button")
+    @discord.ui.button(label="🔍 Tìm Kiếm", style=discord.ButtonStyle.primary, custom_id="search_button")
     async def search(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("You chose to Search the area! Waiting for others...", ephemeral=True)
+        await interaction.response.send_message("Bạn chọn Tìm Kiếm! Đang chờ người chơi khác...", ephemeral=True)
         await game_engine.register_action(interaction.user.id, self.game_id, "search")
 
 
@@ -41,11 +41,11 @@ class GameDashboard(discord.Embed):
     """A custom Embed to display the game's state."""
     def __init__(self, scene_description: str, players_status: list, turn: int):
         super().__init__(
-            title=f"Turn {turn}",
-            description=f"```{{scene_description}}```",
+            title=f"🎮 Lượt {turn}",
+            description=f"```\n{scene_description}\n```",
             color=discord.Color.dark_red()
         )
-        self.set_author(name="Cursed Chronicles")
+        self.set_author(name="🕷️ Quy Tắc Bóng Tối")
         
         status_text = ""
         for player in players_status:
@@ -54,13 +54,13 @@ class GameDashboard(discord.Embed):
             acted_emoji = "✅" if player['has_acted'] else "⏳"
             status_text += f"{acted_emoji} **{player['name']}**\n"
             status_text += f"❤️ HP: {hp_bar}\n"
-            status_text += f"🧠 Sanity: {sanity_bar}\n\n"
+            status_text += f"🧠 Tinh Thần: {sanity_bar}\n\n"
             
         if not status_text:
-            status_text = "No players in the game."
+            status_text = "Không có người chơi trong trò chơi."
 
-        self.add_field(name="Player Status", value=status_text, inline=False)
-        self.set_footer(text="Choose your action below.")
+        self.add_field(name="👥 Trạng Thái Người Chơi", value=status_text, inline=False)
+        self.set_footer(text="Chọn hành động của bạn ở dưới.")
 
 
 # --- Cog for loading the persistent view ---
@@ -71,7 +71,7 @@ class GameUICog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        print("Game UI Cog is ready.")
+        print("✅ Game UI Cog sẵn sàng.")
         # Load all active game views from database
         await self.load_active_game_views()
 
@@ -85,7 +85,7 @@ class GameUICog(commands.Cog):
             for game in active_games:
                 game_id = game['channel_id']
                 self.bot.add_view(ActionView(game_id=game_id))
-                print(f"✅ Loaded ActionView for game {game_id}")
+                print(f"✅ Đã tải ActionView cho trò chơi {game_id}")
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(GameUICog(bot))

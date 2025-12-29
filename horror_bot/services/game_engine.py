@@ -48,7 +48,7 @@ class TurnManager:
         # Schedule the turn processor to run after the timeout
         if self.turn_task:
             self.turn_task.cancel()
-        self.turn_task = asyncio.create_task(self.countdown_and_process)
+        self.turn_task = asyncio.create_task(self.countdown_and_process())
 
     async def countdown_and_process(self):
         """Waits for the turn duration and then processes the results."""
