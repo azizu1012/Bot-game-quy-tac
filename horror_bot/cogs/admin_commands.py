@@ -12,7 +12,7 @@ class AdminCommands(commands.Cog):
     async def on_ready(self):
         print("Admin Commands Cog is ready.")
 
-    @app_commands.command(name="endgame", description="[Admin] Kết thúc trò chơi đang hoạt động trong kênh này.")
+    @app_commands.command(name="endgame", description="🛑 [Quản Trị] Kết thúc trò chơi đang hoạt động và xóa dữ liệu.")
     @app_commands.checks.has_permissions(administrator=True)
     async def end_game(self, interaction: discord.Interaction):
         """Kết thúc một trò chơi và xóa dữ liệu."""
@@ -20,22 +20,31 @@ class AdminCommands(commands.Cog):
         
         active_game = await db_manager.execute_query("SELECT * FROM active_games WHERE channel_id = ? AND is_active = 1", (game_id,), fetchone=True)
         if not active_game:
-            await interaction.response.send_message("Không có trò chơi đang hoạt động để kết thúc trong kênh này.", ephemeral=True)
+            await interaction.response.send_message("⚠️ Không có trò chơi đang hoạt động để kết thúc trong kênh này.", ephemeral=True)
             return
 
         # Clean up the game manager instance to stop any running tasks
         game_engine.game_manager.end_game(game_id)
+
+        # Delete private channel if exists
+        if active_game['private_channel_id']:
+            try:
+                private_channel = self.bot.get_channel(active_game['private_channel_id'])
+                if private_channel:
+                    await private_channel.delete(reason="Game ended")
+            except discord.Forbidden:
+                pass  # Bot không có quyền xóa
 
         # Delete all related data
         await db_manager.execute_query("DELETE FROM players WHERE game_id = ?", (game_id,), commit=True)
         await db_manager.execute_query("DELETE FROM game_maps WHERE game_id = ?", (game_id,), commit=True)
         await db_manager.execute_query("DELETE FROM active_games WHERE channel_id = ?", (game_id,), commit=True)
 
-        await interaction.response.send_message("✅ Trò chơi đã kết thúc và dữ liệu đã bị xóa.", ephemeral=False)
+        await interaction.response.send_message("✅ Trò chơi đã kết thúc! Kênh riêng đã bị xóa và dữ liệu đã bị xóa.", ephemeral=False)
 
-    @app_commands.command(name="showdb", description="[Admin] Hiển thị dữ liệu từ bảng cơ sở dữ liệu.")
+    @app_commands.command(name="showdb", description="🔍 [Quản Trị] Hiển thị dữ liệu từ bảng cơ sở dữ liệu.")
     @app_commands.checks.has_permissions(administrator=True)
-    @app_commands.describe(table="Bảng dữ liệu cần xem.")
+    @app_commands.describe(table="Bảng dữ liệu cần xem")
     @app_commands.choices(table=[
         app_commands.Choice(name="active_games", value="active_games"),
         app_commands.Choice(name="players", value="players"),
@@ -73,9 +82,9 @@ class AdminCommands(commands.Cog):
     @show_db.error
     async def on_admin_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         if isinstance(error, app_commands.errors.CheckFailure):
-            await interaction.response.send_message("Bạn không có quyền để sử dụng lệnh này.", ephemeral=True)
+            await interaction.response.send_message("You do not have the required permissions for this command.", ephemeral=True)
         else:
-            await interaction.response.send_message(f"Lỗi không mong muốn: {error}", ephemeral=True)
+            await interaction.response.send_message(f"An unexpected error occurred: {error}", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

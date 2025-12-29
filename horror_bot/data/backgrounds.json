@@ -1,8 +1,8 @@
 [
     {
         "id": "police",
-        "name": "Police Officer",
-        "description": "Trained for combat, you have higher accuracy.",
+        "name": "Cảnh Sát",
+        "description": "Bạn là một cảnh sát được đào tạo trong chiến đấu. Độ chính xác cao hơn.",
         "stats": {
             "hp": 100,
             "sanity": 80,
@@ -12,8 +12,8 @@
     },
     {
         "id": "athlete",
-        "name": "Athlete",
-        "description": "You are fast and agile, making it easier to flee.",
+        "name": "Vận Động Viên",
+        "description": "Bạn nhanh nhẹn và linh hoạt, dễ dàng thoát chạy khỏi nguy hiểm.",
         "stats": {
             "hp": 110,
             "sanity": 100,
@@ -23,13 +23,46 @@
     },
     {
         "id": "doctor",
-        "name": "Doctor",
-        "description": "Your medical knowledge gives you a higher starting sanity.",
+        "name": "Bác Sĩ",
+        "description": "Kiến thức y học của bạn mang lại tinh thần vững vàng hơn.",
         "stats": {
             "hp": 100,
             "sanity": 120,
             "agi": 50,
             "acc": 50
+        }
+    },
+    {
+        "id": "journalist",
+        "name": "Nhà Báo",
+        "description": "Kỹ năng điều tra giúp bạn tìm ra bí mật ẩn giấu.",
+        "stats": {
+            "hp": 85,
+            "sanity": 95,
+            "agi": 55,
+            "acc": 65
+        }
+    },
+    {
+        "id": "mechanic",
+        "name": "Thợ Máy",
+        "description": "Sức mạnh thể chất cho phép bạn chống chịu lâu hơn.",
+        "stats": {
+            "hp": 120,
+            "sanity": 90,
+            "agi": 45,
+            "acc": 55
+        }
+    },
+    {
+        "id": "psychologist",
+        "name": "Nhà Tâm Lý Học",
+        "description": "Bạn hiểu tâm lý con người, tinh thần vô cùng mạnh mẽ.",
+        "stats": {
+            "hp": 90,
+            "sanity": 130,
+            "agi": 50,
+            "acc": 60
         }
     }
 ]

@@ -3,7 +3,7 @@ import time
 import random
 from database import db_manager
 from config import TURN_TIME_SECONDS
-from services import llm_service
+from services import llm_service, scenario_generator
 
 class GameManager:
     """Manages all active game instances and their TurnManagers."""
@@ -35,6 +35,7 @@ class TurnManager:
         self.turn_task = None
         self.processing_lock = asyncio.Lock()  # Thread-safe lock
         self.publish_callback = publish_callback
+        self.action_counts = {}  # Track action confirmations per action type
 
     async def start_turn(self):
         """Starts the countdown timer for a new turn."""
@@ -43,6 +44,8 @@ class TurnManager:
             (time.time() + TURN_TIME_SECONDS, self.game_id),
             commit=True
         )
+        # Reset actions untuk turn baru
+        self.action_counts = {}
         print(f"Game {self.game_id}: Turn started.")
 
         # Schedule the turn processor to run after the timeout
@@ -58,84 +61,126 @@ class TurnManager:
             await self.process_turn_results(timed_out=True)
         except asyncio.CancelledError:
             print(f"Game {self.game_id}: Turn ended early by all players acting.")
-            # The processing will be initiated by the last player's action
             pass
 
     async def handle_player_action(self, user_id: int, action_type: str):
-        """Records a player's action and checks if the turn can end early."""
+        """Records a player's action - first selection chưa confirm."""
         # Store the chosen action in the database
         await db_manager.execute_query(
-            "UPDATE players SET has_acted_this_turn = 1, action_this_turn = ? WHERE user_id = ? AND game_id = ?",
+            "UPDATE players SET action_this_turn = ?, confirmed_action = 0 WHERE user_id = ? AND game_id = ?",
             (action_type, user_id, self.game_id),
             commit=True
         )
-        print(f"Game {self.game_id}: Player {user_id} acted ({action_type}).")
+        print(f"Game {self.game_id}: Player {user_id} selected action ({action_type}), awaiting confirmation.")
 
-        # Check if all active players have now acted
-        all_players = await db_manager.execute_query("SELECT 1 FROM players WHERE game_id = ? AND hp > 0", (self.game_id,), fetchall=True)
-        acted_players = await db_manager.execute_query("SELECT 1 FROM players WHERE game_id = ? AND hp > 0 AND has_acted_this_turn = 1", (self.game_id,), fetchall=True)
+    async def confirm_action(self, user_id: int):
+        """Người chơi confirm lựa chọn hành động của họ."""
+        player = await db_manager.execute_query(
+            "SELECT action_this_turn FROM players WHERE user_id = ? AND game_id = ?",
+            (user_id, self.game_id), fetchone=True
+        )
+        
+        if not player or not player['action_this_turn']:
+            return False
+        
+        # Mark as confirmed
+        await db_manager.execute_query(
+            "UPDATE players SET confirmed_action = 1, has_acted_this_turn = 1 WHERE user_id = ? AND game_id = ?",
+            (user_id, self.game_id),
+            commit=True
+        )
+        print(f"Game {self.game_id}: Player {user_id} confirmed action.")
 
-        if len(acted_players) >= len(all_players):
+        # Check if all active players have confirmed
+        all_players = await db_manager.execute_query(
+            "SELECT 1 FROM players WHERE game_id = ? AND hp > 0", 
+            (self.game_id,), fetchall=True
+        )
+        confirmed_players = await db_manager.execute_query(
+            "SELECT 1 FROM players WHERE game_id = ? AND hp > 0 AND confirmed_action = 1", 
+            (self.game_id,), fetchall=True
+        )
+
+        if len(confirmed_players) >= len(all_players):
             if self.turn_task:
-                self.turn_task.cancel() # Stop the countdown
+                self.turn_task.cancel()
             await self.process_turn_results()
+        
+        return True
 
     async def process_turn_results(self, timed_out: bool = False):
         """Calculates the outcome of the turn and prepares for the next one."""
-        async with self.processing_lock:  # Use lock to prevent race conditions
+        async with self.processing_lock:
             print(f"Game {self.game_id}: Processing turn results...")
             turn_events = []
 
             try:
-                # 1. Apply penalty for AFK players if the turn timed out
+                game_info = await db_manager.execute_query(
+                    "SELECT scenario_type FROM active_games WHERE channel_id = ?",
+                    (self.game_id,), fetchone=True
+                )
+                scenario_type = game_info['scenario_type'] if game_info else 'hotel'
+
+                # 1. Apply penalty for players who didn't confirm/act
                 if timed_out:
                     afk_players = await db_manager.execute_query(
-                        "SELECT user_id, sanity FROM players WHERE game_id = ? AND has_acted_this_turn = 0 AND hp > 0",
+                        "SELECT user_id, sanity FROM players WHERE game_id = ? AND (confirmed_action = 0 OR has_acted_this_turn = 0) AND hp > 0",
                         (self.game_id,), fetchall=True
                     )
-                    penalty_sanity = 10
+                    penalty_sanity = 15
                     for player_row in afk_players:
+                        new_sanity = max(0, player_row['sanity'] - penalty_sanity)
                         await db_manager.execute_query(
-                            "UPDATE players SET sanity = sanity - ? WHERE user_id = ? AND game_id = ?",
-                            (penalty_sanity, player_row['user_id'], self.game_id), commit=True
+                            "UPDATE players SET sanity = ? WHERE user_id = ? AND game_id = ?",
+                            (new_sanity, player_row['user_id'], self.game_id), commit=True
                         )
-                        turn_events.append(f"<@{player_row['user_id']}> was slow to react and lost {penalty_sanity} sanity!")
+                        turn_events.append(f"👻 Người chơi bị bỏ qua lượt mất {penalty_sanity} tinh thần!")
 
-                # 2. Process actions (this is a simplified example)
-                # In a real game, you'd have monster AI, check locations, etc.
+                # 2. Process confirmed actions
                 actions = await db_manager.execute_query(
-                    "SELECT user_id, action_this_turn FROM players WHERE game_id = ? AND has_acted_this_turn = 1",
+                    "SELECT user_id, action_this_turn, background_name FROM players WHERE game_id = ? AND confirmed_action = 1",
                     (self.game_id,), fetchall=True
                 )
+                
+                action_summaries = []
                 for action in actions:
+                    bg_name = action['background_name']
                     if action['action_this_turn'] == 'search':
-                        turn_events.append(f"<@{action['user_id']}> found a dusty old coin.")
+                        turn_events.append(f"🔍 {bg_name} tìm kiếm xung quanh...")
+                        action_summaries.append('search')
                     elif action['action_this_turn'] == 'attack':
-                        turn_events.append(f"<@{action['user_id']}> swung wildly at the darkness.")
+                        turn_events.append(f"⚔️ {bg_name} tấn công vào bóng tối!")
+                        action_summaries.append('attack')
+                    elif action['action_this_turn'] == 'flee':
+                        turn_events.append(f"🏃 {bg_name} chạy thoát!")
+                        action_summaries.append('flee')
                 
-                # 3. Use LLM to generate a narrative summary of the turn
-                scene_keywords = ["darkness", "fear"] + [a['action_this_turn'] for a in actions if a['action_this_turn']]
-                summary = await asyncio.wait_for(
-                    llm_service.describe_scene(list(set(scene_keywords))),
-                    timeout=5.0  # 5 second timeout for LLM
-                )
-                
-                # 4. Reset player turn status for the next round
+                # 3. Generate LLM narrative
+                scene_keywords = [scenario_type, "nguy hiểm"] + action_summaries
+                try:
+                    summary = await asyncio.wait_for(
+                        llm_service.describe_scene(list(set(scene_keywords))),
+                        timeout=5.0
+                    )
+                except asyncio.TimeoutError:
+                    summary = f"Lượt {(await db_manager.execute_query('SELECT current_turn FROM active_games WHERE channel_id = ?', (self.game_id,), fetchone=True))['current_turn']}: Tình cảnh ngày càng căng thẳng..."
+
+                # 4. Reset turn states
                 await db_manager.execute_query(
-                    "UPDATE players SET has_acted_this_turn = 0, action_this_turn = NULL WHERE game_id = ?",
+                    "UPDATE players SET has_acted_this_turn = 0, action_this_turn = NULL, confirmed_action = 0 WHERE game_id = ?",
                     (self.game_id,), commit=True
                 )
                 
-                print(f"Game {self.game_id}: Turn processed. Summary: {summary}")
+                print(f"Game {self.game_id}: Turn processed.")
                 
-                # 5. Publish results via callback if it exists
+                # 5. Publish results
                 if self.publish_callback:
                     try:
                         await self.publish_callback(self.game_id, summary, turn_events)
                     except Exception as e:
                         print(f"Game {self.game_id}: Error in publish_callback: {e}")
                 
-                # 6. Start the next turn
+                # 6. Start next turn
                 await self.start_turn()
             except asyncio.TimeoutError:
                 print(f"Game {self.game_id}: LLM timeout, skipping description")
@@ -159,3 +204,8 @@ async def register_action(user_id: int, game_id: int, action: str):
     """Entry point for the UI to register a player's action."""
     manager = game_manager.get_manager(game_id)
     await manager.handle_player_action(user_id, action)
+
+async def confirm_player_action(user_id: int, game_id: int):
+    """Entry point for confirming an action."""
+    manager = game_manager.get_manager(game_id)
+    return await manager.confirm_action(user_id)

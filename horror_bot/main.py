@@ -16,41 +16,45 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
-    print(f'Logged in as {bot.user} (ID: {bot.user.id})')
-    print('------')
+    print(f'✅ Đã đăng nhập dưới tên: {bot.user} (ID: {bot.user.id})')
+    print('=' * 50)
     
     # 1. Setup Database
-    print("\n🗄️ Setting up database...")
+    print("\n📦 Khởi tạo cơ sở dữ liệu...")
     try:
         await setup_database()
-        print("✅ Database ready.")
+        print("✅ Cơ sở dữ liệu sẵn sàng.")
     except Exception as e:
-        print(f"❌ Database error: {e}")
+        print(f"❌ Lỗi cơ sở dữ liệu: {e}")
     
     # 2. Load LLM
-    print("\n🤖 Loading LLM model...")
+    print("\n🤖 Tải mô hình AI...")
     if load_llm():
-        print("✓ LLM ready for game descriptions\n")
+        print("✅ LLM sẵn sàng cho mô tả game\n")
     else:
-        print("⚠ LLM failed to load. Game descriptions will be limited.\n")
+        print("⚠️  LLM không thể tải. Mô tả sẽ bị hạn chế.\n")
     
     # 3. Load Cogs
     try:
         await bot.load_extension("cogs.game_commands")
         await bot.load_extension("cogs.admin_commands")
         await bot.load_extension("cogs.game_ui")
-        print("✅ Cogs loaded successfully.")
+        print("✅ Các plugin đã tải thành công.")
     except Exception as e:
-        print(f"❌ Error loading cogs: {e}")
+        print(f"❌ Lỗi tải plugin: {e}")
 
-    # 4. AUTO-SYNC SLASH COMMANDS (no need for !sync)
-    print("\n🔄 Auto-syncing slash commands...")
+    # 4. AUTO-SYNC SLASH COMMANDS
+    print("\n🔄 Đồng bộ hóa slash commands...")
     try:
         synced = await bot.tree.sync()
-        print(f"✅ Successfully synced {len(synced)} slash commands globally!")
-        print("🚀 Bot is ready! Use /newgame, /join, /endgame commands now.")
+        print(f"✅ Đã đồng bộ {len(synced)} slash commands!")
+        for cmd in synced:
+            print(f"   - /{cmd.name}")
+        print("\n" + "=" * 50)
+        print("🚀 Bot sẵn sàng! Sử dụng /newgame, /join, /endgame")
+        print("=" * 50)
     except Exception as e:
-        print(f"❌ Error syncing commands: {e}")
+        print(f"❌ Lỗi đồng bộ hóa: {e}")
 
 if __name__ == "__main__":
     if not DISCORD_TOKEN:

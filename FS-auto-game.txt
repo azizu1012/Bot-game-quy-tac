@@ -1,0 +1,171 @@
+Role: Bạn là Senior Python FUll Stack Developer.
+
+
+Task: Tạo cấu trúc dự án và code base khung (boilerplate) cho một Discord Bot Game RPG Kinh Dị (Text-based). Environment: VPS Linux, Python 3.10+, CPU Only (Xeon), 16GB RAM. Không dùng Docker. Libraries: discord.py, llama-cpp-python, aiosqlite (Bắt buộc dùng async DB).
++1
+
+Hãy đọc kỹ đặc tả kỹ thuật dưới đây và generate code.
+
+1. Mô tả dự án & Cơ chế Game (Project Overview)
+Hệ thống là một bot Discord quản trò (Game Master) cho game kinh dị sinh tồn, kết hợp giữa thuật toán ngẫu nhiên (RNG) và AI (LLM) để mô tả lại văn bản.
++1
+
+
+Core Gameplay: Turn-based (Theo lượt) kết hợp với Real-time Countdown.
+
+
+Procedural Map: Hệ thống map phân cấp (Hierarchical), sinh ngẫu nhiên số tầng và số phòng dựa trên file config.
++2
+
+Stats System: Hệ thống chỉ số RPG (HP, Sanity, Agility, Accuracy) ảnh hưởng đến kết quả hành động.
+
+Interaction Flow (UI/UX):
+
+Hiển thị: Sử dụng Discord Embed để làm Dashboard (luôn được cập nhật hoặc gửi mới sau mỗi lượt).
+
+Thao tác: Sử dụng Discord Buttons cho các hành động.
+
+Phản hồi: Bot phản hồi ephemeral=True (chỉ người bấm thấy) để xác nhận hành động, tránh spam kênh chat.
+
+Timeout: Mỗi lượt có giới hạn thời gian (ví dụ: 60s). Hết giờ sẽ kích hoạt hình phạt (Penalty) cho người chưa hành động.
+
+2. Cấu trúc thư mục (Directory Structure)
+Dựa trên cấu trúc cơ bản đã có, bổ sung thêm các module UI và dữ liệu RPG:
+
+Plaintext
+
+horror_bot/
+├── .env
+├── requirements.txt
+├── main.py
+├── config.py
+├── data/
+│   ├── scenarios/          # hotel.json, hospital.json [cite: 10]
+│   ├── backgrounds.json    # [NEW] Định nghĩa Class nhân vật (Police, Athlete...)
+│   ├── descriptions/       # rooms.txt, smells.txt [cite: 11]
+│   └── entities/           # ghosts.txt, creatures.txt [cite: 11]
+├── database/
+│   ├── db_manager.py       # Async SQLite connection [cite: 12]
+│   └── schema.sql
+├── services/
+│   ├── llm_service.py      # AI Wrapper (LlamaCPP) [cite: 12]
+│   ├── map_generator.py    # Logic sinh Map Node [cite: 12]
+│   └── game_engine.py      # Logic chính: Turn, Stats, Penalty [cite: 12]
+└── cogs/
+    ├── game_ui.py          # [NEW] Chứa Class View, Button, Embed
+    ├── game_commands.py    # Lệnh slash: /newgame, /join
+    └── admin_commands.py   # Lệnh debug [cite: 13]
+3. Chi tiết Logic & Classes (Implementation Details)
+A. Module: services/game_engine.py (Core Logic)
+Mở rộng logic quản lý state người chơi và xử lý lượt:
+
+Class TurnManager:
+
+start_turn(game_id): Bắt đầu đếm ngược (asyncio.sleep).
+
+handle_player_action(user_id, action_type): Ghi nhận người chơi đã hành động. Nếu tất cả đã xong -> Hủy timer -> Gọi process_turn_results.
+
+apply_timeout_penalty(): Trừ HP/Sanity của những người có has_acted=False khi hết giờ.
+
+Hàm tính toán RPG (RNG + Stats):
+
+calculate_hit(player_acc, monster_evasion): Tính tỉ lệ trúng.
+
+calculate_flee(player_agi): Tính tỉ lệ chạy thoát dựa trên chỉ số Agility.
+
+B. Module: cogs/game_ui.py (UI & Interaction)
+Đây là phần hiển thị giao diện người dùng:
+
+Class GameDashboard(discord.Embed):
+
+Hiển thị tình huống hiện tại (Text do AI mô tả).
+
+Hiển thị thanh trạng thái (Progress Bar) cho HP và Sanity.
+
+Hiển thị danh sách người chơi và trạng thái (Đã xong lượt / Chưa xong).
+
+Class ActionView(discord.ui.View):
+
+Chứa các nút: [⚔️ Attack], [🏃 Flee], [🔍 Search].
+
+Logic Ephemeral:
+
+Python
+
+@discord.ui.button(label="Attack")
+async def attack(self, interaction, button):
+    await interaction.response.send_message("Bạn đã chọn Tấn công! Đang chờ đồng đội...", ephemeral=True)
+    await game_engine.register_action(interaction.user.id, "attack")
+C. Module: services/map_generator.py
+
+Class MapNode & MapStructure:
+
+Đọc file JSON config (ví dụ hotel.json).
++1
+
+Random số tầng (min_floors - max_floors) và số phòng mỗi tầng.
++1
+
+Gán sẵn quái vật/sự kiện vào Node ngay khi khởi tạo.
+
+D. Module: services/llm_service.py
+Sử dụng llama_cpp.Llama với n_threads tối đa để chạy trên CPU.
+
+Hàm describe_scene: Nhận keywords (context), trả về đoạn văn mô tả ngắn gọn (<50 từ).
+
+4. Sơ đồ dữ liệu (Database Schema - SQLite)
+Cập nhật Schema để hỗ trợ Timeout và Stats RPG.
+
+SQL
+
+-- Bảng quản lý phiên chơi
+CREATE TABLE active_games (
+    channel_id INTEGER PRIMARY KEY,
+    host_id INTEGER,
+    scenario_type TEXT,
+    current_turn INTEGER DEFAULT 0,
+    turn_deadline_ts REAL, -- [NEW] Timestamp thời điểm hết giờ
+    is_active BOOLEAN DEFAULT 1
+);
+
+-- Bảng lưu Map (JSON)
+CREATE TABLE game_maps (
+    game_id INTEGER,
+    map_data JSON, -- Cấu trúc cây node [cite: 24]
+    FOREIGN KEY(game_id) REFERENCES active_games(channel_id)
+);
+
+-- Bảng người chơi & Chỉ số
+CREATE TABLE players (
+    user_id INTEGER,
+    game_id INTEGER,
+    
+    -- Chỉ số cơ bản
+    hp INTEGER DEFAULT 100,
+    sanity INTEGER DEFAULT 100[cite: 25],
+    
+    -- Chỉ số RPG & Background [NEW]
+    agi INTEGER DEFAULT 50, -- Agility (Tốc độ/Chạy trốn)
+    acc INTEGER DEFAULT 50, -- Accuracy (Chính xác)
+    background_id TEXT,     -- ID nghề nghiệp (police, doctor...)
+    
+    -- Trạng thái lượt
+    has_acted_this_turn BOOLEAN DEFAULT 0, -- Check để xử lý Timeout
+    
+    current_location_id TEXT,
+    inventory JSON,
+    PRIMARY KEY(user_id, game_id)
+);
+5. Yêu cầu Code Generation (Instruction for Agent)
+
+Map Logic: Viết hàm generate_map_structure đọc config JSON và tạo đồ thị Map.
+
+
+AI Integration: Viết hàm chạy llama_cpp trong executor (thread pool) để tránh chặn main thread của bot.
+
+UI Logic: Trong game_ui.py, tạo View với các Button trả về ephemeral=True.
+
+Async Timer: Trong game_engine.py, viết hàm countdown_timer dùng asyncio để xử lý Timeout và gọi hàm phạt apply_penalty nếu người chơi AFK.
+
+
+Data Loading: Viết hàm utility đọc ngẫu nhiên các file .txt (description/entities) để trộn nội dung cho AI viết văn.
