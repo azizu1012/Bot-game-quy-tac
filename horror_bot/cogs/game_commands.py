@@ -9,51 +9,152 @@ import json
 import asyncio
 import random
 import time
+import uuid
+
+class JoinGameView(discord.ui.View):
+    """Menu for joining a game - shows only Join button and counter."""
+    def __init__(self, game_id: int, game_code: str, timeout: float = 600):
+        super().__init__(timeout=timeout)
+        self.game_id = game_id
+        self.game_code = game_code
+
+    @discord.ui.button(label="📍 Vào Phòng Chờ", style=discord.ButtonStyle.success, emoji="📍")
+    async def join_game(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        user_id = interaction.user.id
+        
+        # Check if already in game
+        if await db_manager.check_player_in_game(user_id, self.game_id):
+            await interaction.followup.send("⚠️ Bạn đã tham gia rồi!", ephemeral=True)
+            return
+
+        # Check if already in another game
+        current_game = await db_manager.get_player_current_game(user_id)
+        if current_game:
+            await interaction.followup.send(
+                "⚠️ Bạn đang tham gia một trò chơi khác!",
+                ephemeral=True
+            )
+            return
+
+        # Get game and map info
+        game = await db_manager.execute_query(
+            "SELECT * FROM active_games WHERE channel_id = ? AND is_active = 1",
+            (self.game_id,),
+            fetchone=True
+        )
+        if not game:
+            await interaction.followup.send("❌ Phòng này không tồn tại.", ephemeral=True)
+            return
+
+        game_map_data = await db_manager.execute_query(
+            "SELECT map_data FROM game_maps WHERE game_id = ?",
+            (self.game_id,),
+            fetchone=True
+        )
+        if not game_map_data:
+            await interaction.followup.send("❌ Lỗi dữ liệu.", ephemeral=True)
+            return
+
+        map_nodes = json.loads(game_map_data['map_data'])
+        start_node_id = list(map_nodes.get('nodes', {}).keys())[0] if map_nodes.get('nodes') else None
+
+        # Create player profile
+        profile = await background_service.create_player_profile(game['scenario_type'])
+
+        # Add to database
+        await db_manager.execute_query(
+            """INSERT INTO players 
+               (user_id, game_id, background_id, background_name, background_description,
+                hp, sanity, agi, acc, current_location_id, waiting_room_confirmed)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
+            (user_id, self.game_id, profile['background_id'], profile['background_name'],
+             profile['background_description'], profile['hp'], profile['sanity'],
+             profile['agi'], profile['acc'], start_node_id),
+            commit=True
+        )
+
+        # Grant private channel access
+        private_channel = interaction.client.get_channel(game['private_channel_id'])
+        if private_channel:
+            await private_channel.set_permissions(
+                interaction.user,
+                read_messages=True,
+                send_messages=False
+            )
+
+        # Update waiting room embed
+        await update_join_menu_embed(interaction.client, self.game_id, self.game_code)
+
+        await interaction.followup.send(
+            f"✅ {interaction.user.mention} vào phòng chờ!\n"
+            f"Background: **{profile['background_name']}**",
+            ephemeral=False,
+            delete_after=5
+        )
+
 
 class WaitingRoomView(discord.ui.View):
-    """Waiting room confirmation buttons."""
+    """Waiting room confirmation - players confirm to start game."""
     def __init__(self, game_id: int, timeout: float = None):
         super().__init__(timeout=timeout)
         self.game_id = game_id
 
-    @discord.ui.button(label="✅ Xác Nhận Tham Gia", style=discord.ButtonStyle.success, emoji="✅")
-    async def confirm_join(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="✅ Sẵn Sàng", style=discord.ButtonStyle.success, emoji="✅")
+    async def confirm_ready(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         user_id = interaction.user.id
-        
-        # Mark player as confirmed in waiting room
+
+        # Mark as confirmed
         await db_manager.execute_query(
             "UPDATE players SET waiting_room_confirmed = 1 WHERE user_id = ? AND game_id = ?",
             (user_id, self.game_id),
             commit=True
         )
-        
+
         await interaction.followup.send(
-            f"✅ {interaction.user.mention} đã xác nhận tham gia!",
+            f"✅ {interaction.user.mention} sẵn sàng!",
             ephemeral=False,
             delete_after=3
         )
 
-    @discord.ui.button(label="❌ Từ Chối Tham Gia", style=discord.ButtonStyle.danger, emoji="❌")
-    async def reject_join(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Update waiting room
+        await update_waiting_room_embed(interaction.client, self.game_id)
+
+        # Check if all confirmed
+        game = await db_manager.execute_query(
+            "SELECT * FROM active_games WHERE channel_id = ?",
+            (self.game_id,),
+            fetchone=True
+        )
+        if not game:
+            return
+
+        confirmations = await db_manager.get_waiting_room_confirmations(self.game_id)
+        if confirmations['confirmed'] > 0 and confirmations['confirmed'] == confirmations['total']:
+            # All players confirmed - start the game!
+            await start_game_from_waiting_room(interaction.client, self.game_id)
+
+    @discord.ui.button(label="❌ Hủy Bỏ", style=discord.ButtonStyle.danger, emoji="❌")
+    async def reject_ready(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         user_id = interaction.user.id
         game_id = self.game_id
-        
+
         # Remove player from game
         await db_manager.execute_query(
             "DELETE FROM players WHERE user_id = ? AND game_id = ?",
             (user_id, game_id),
             commit=True
         )
-        
-        # Give permission back to private channel
+
+        # Revoke channel access
         game = await db_manager.execute_query(
             "SELECT private_channel_id FROM active_games WHERE channel_id = ?",
             (game_id,),
             fetchone=True
         )
-        
+
         if game and game['private_channel_id']:
             channel = interaction.client.get_channel(game['private_channel_id'])
             if channel:
@@ -61,38 +162,312 @@ class WaitingRoomView(discord.ui.View):
                     await channel.set_permissions(interaction.user, overwrite=None)
                 except:
                     pass
-        
+
         await interaction.followup.send(
-            f"❌ {interaction.user.mention} đã từ chối tham gia phòng chờ!",
+            f"❌ {interaction.user.mention} đã rời phòng chờ.",
             ephemeral=False,
             delete_after=3
         )
 
 
+async def update_join_menu_embed(bot: commands.Bot, game_id: int, game_code: str):
+    """Update the join menu embed with current player count."""
+    game = await db_manager.execute_query(
+        "SELECT * FROM active_games WHERE channel_id = ?",
+        (game_id,),
+        fetchone=True
+    )
+    if not game or not game['private_channel_id']:
+        return
+
+    confirmations = await db_manager.get_waiting_room_confirmations(game_id)
+    total = confirmations['total']
+
+    private_channel = bot.get_channel(game['private_channel_id'])
+    if not private_channel:
+        return
+
+    embed = discord.Embed(
+        title="🎮 Phòng Chơi Đang Chờ",
+        description=f"**Mã Phòng:** `{game_code}`",
+        color=discord.Color.dark_red()
+    )
+    embed.add_field(
+        name="👥 Người Chơi",
+        value=f"0/{total}",
+        inline=False
+    )
+    embed.add_field(
+        name="📌 Hướng Dẫn",
+        value="Nhấn nút **📍 Vào Phòng Chờ** để tham gia",
+        inline=False
+    )
+
+    try:
+        if game.get('join_menu_message_id'):
+            msg = await private_channel.fetch_message(game['join_menu_message_id'])
+            await msg.edit(embed=embed)
+        else:
+            view = JoinGameView(game_id, game_code)
+            msg = await private_channel.send(embed=embed, view=view)
+            await db_manager.execute_query(
+                "UPDATE active_games SET join_menu_message_id = ? WHERE channel_id = ?",
+                (msg.id, game_id),
+                commit=True
+            )
+    except:
+        pass
+
+
+async def update_waiting_room_embed(bot: commands.Bot, game_id: int):
+    """Update waiting room embed with confirmation status."""
+    game = await db_manager.execute_query(
+        "SELECT * FROM active_games WHERE channel_id = ?",
+        (game_id,),
+        fetchone=True
+    )
+    if not game or not game['private_channel_id']:
+        return
+
+    confirmations = await db_manager.get_waiting_room_confirmations(game_id)
+    confirmed = confirmations['confirmed']
+    total = confirmations['total']
+
+    private_channel = bot.get_channel(game['private_channel_id'])
+    if not private_channel:
+        return
+
+    embed = discord.Embed(
+        title="🎮 Phòng Chờ - Xác Nhận Tham Gia",
+        description="Tất cả người chơi vui lòng xác nhận để bắt đầu!",
+        color=discord.Color.blue()
+    )
+    embed.add_field(
+        name="👥 Sẵn Sàng",
+        value=f"{confirmed}/{total}",
+        inline=False
+    )
+    embed.add_field(
+        name="📌 Hướng Dẫn",
+        value="✅ Nhấn để xác nhận\n❌ Nhấn để rời phòng",
+        inline=False
+    )
+
+    # Progress bar
+    progress = int((confirmed / total) * 10) if total > 0 else 0
+    progress_bar = "🟩" * progress + "⬜" * (10 - progress)
+    embed.add_field(
+        name="⏳ Tiến Độ",
+        value=progress_bar,
+        inline=False
+    )
+
+    try:
+        if game.get('waiting_room_message_id'):
+            msg = await private_channel.fetch_message(game['waiting_room_message_id'])
+            view = WaitingRoomView(game_id)
+            await msg.edit(embed=embed, view=view)
+        else:
+            view = WaitingRoomView(game_id)
+            msg = await private_channel.send(embed=embed, view=view)
+            await db_manager.execute_query(
+                "UPDATE active_games SET waiting_room_message_id = ? WHERE channel_id = ?",
+                (msg.id, game_id),
+                commit=True
+            )
+    except:
+        pass
+
+
+async def start_game_from_waiting_room(bot: commands.Bot, game_id: int):
+    """Start game when all players confirm."""
+    game = await db_manager.execute_query(
+        "SELECT * FROM active_games WHERE channel_id = ?",
+        (game_id,),
+        fetchone=True
+    )
+    if not game or not game['private_channel_id']:
+        return
+
+    private_channel = bot.get_channel(game['private_channel_id'])
+    if not private_channel:
+        return
+
+    # Clear chat
+    try:
+        async for message in private_channel.history(limit=100):
+            try:
+                await message.delete()
+            except:
+                pass
+    except:
+        pass
+
+    # Generate world lore
+    lore = await llm_service.generate_world_lore(game['scenario_type'])
+
+    # Send lore (with chunking for 2000 char limit)
+    chunks = chunk_text(lore, 1900)
+    for chunk in chunks:
+        await private_channel.send(chunk)
+
+    # Get players and create initial scene
+    players = await db_manager.execute_query(
+        "SELECT user_id, background_name, hp, sanity FROM players WHERE game_id = ?",
+        (game_id,),
+        fetchall=True
+    )
+
+    players_info = "\n".join([
+        f"👤 {p['background_name']} | HP: {p['hp']} | Sanity: {p['sanity']}"
+        for p in players
+    ])
+
+    intro_description = await scenario_generator.generate_turn_intro(game['scenario_type'], 1, 1)
+
+    scene_text = f"""**━━━━━━━━━━━━━━━━━━━**
+**LƯỢT 1**
+
+{intro_description}
+
+**📊 CÁC NGƯỜI CHƠI:**
+{players_info}
+
+**⏱️ Đang đếm ngược...**
+**━━━━━━━━━━━━━━━━━━━**"""
+
+    game_msg = await private_channel.send(scene_text)
+
+    # Update database
+    await db_manager.execute_query(
+        "UPDATE active_games SET dashboard_message_id = ?, waiting_room_stage = 2 WHERE channel_id = ?",
+        (game_msg.id, game_id),
+        commit=True
+    )
+
+    # Start game manager
+    turn_manager = game_engine.game_manager.get_manager(game_id, publish_callback=publish_turn_results)
+    await turn_manager.start_turn()
+
+    # Start countdown
+    asyncio.create_task(update_game_countdown(game_msg, game_id, TURN_TIME_SECONDS))
+
+
+def chunk_text(text: str, max_length: int = 1900) -> list[str]:
+    """Split text into chunks for Discord's 2000 char limit."""
+    chunks = []
+    current_chunk = ""
+
+    for line in text.split('\n'):
+        if len(current_chunk) + len(line) + 1 > max_length:
+            if current_chunk:
+                chunks.append(current_chunk)
+            current_chunk = line
+        else:
+            if current_chunk:
+                current_chunk += '\n' + line
+            else:
+                current_chunk = line
+
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    return chunks if chunks else [text]
+
+
+async def update_game_countdown(message: discord.Message, game_id: int, duration: int):
+    """Update countdown timer in place."""
+    start_time = time.time()
+    end_time = start_time + duration
+
+    try:
+        while time.time() < end_time:
+            remaining = int(end_time - time.time())
+            minutes = remaining // 60
+            seconds = remaining % 60
+
+            game = await db_manager.execute_query(
+                "SELECT current_turn FROM active_games WHERE channel_id = ? AND is_active = 1",
+                (game_id,),
+                fetchone=True
+            )
+            if not game:
+                break
+
+            players = await db_manager.execute_query(
+                "SELECT user_id, background_name, hp, sanity FROM players WHERE game_id = ?",
+                (game_id,),
+                fetchall=True
+            )
+
+            players_info = "\n".join([
+                f"👤 {p['background_name']} | HP: {p['hp']} | Sanity: {p['sanity']}"
+                for p in players
+            ])
+
+            content = f"""**━━━━━━━━━━━━━━━━━━━**
+**LƯỢT {game['current_turn']}**
+
+Tình hình đang phát triển...
+
+**📊 CÁC NGƯỜI CHƠI:**
+{players_info}
+
+**⏱️ Thời gian còn lại: {minutes}:{seconds:02d}**
+**━━━━━━━━━━━━━━━━━━━**"""
+
+            try:
+                await message.edit(content=content)
+            except:
+                break
+
+            await asyncio.sleep(2)
+
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        print(f"Countdown error: {e}")
+
+
+async def publish_turn_results(game_id: int, summary: str, turn_events: list):
+    """Publish turn results in plain text."""
+    game = await db_manager.execute_query(
+        "SELECT private_channel_id FROM active_games WHERE channel_id = ?",
+        (game_id,),
+        fetchone=True
+    )
+    if not game or not game['private_channel_id']:
+        return
+
+    # This is handled by the cog listener
+    return
+
+
 class GameCommands(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.db_ready = False
-        self.waiting_room_updates = {}  # Track waiting room message updates
 
     @app_commands.command(
         name="newgame",
-        description="🎮 Bắt đầu một trò chơi kinh dí mới"
+        description="🎮 Tạo một phòng chơi mới"
     )
-    @app_commands.describe(scenario="📍 Chọn kịch bản (để trống để random)")
+    @app_commands.describe(scenario="📍 Chọn kịch bản (để trống = random)")
     async def new_game(self, interaction: discord.Interaction, scenario: str = None):
         await interaction.response.defer()
 
-        # Check if user is already in another game
+        # Check if user already in game
         current_game = await db_manager.get_player_current_game(interaction.user.id)
         if current_game:
             await interaction.followup.send(
-                "⚠️ Bạn đang tham gia một trò chơi khác! Hãy kết thúc nó trước (`/endgame`).",
+                "⚠️ Bạn đang tham gia một trò chơi khác!",
                 ephemeral=True
             )
             return
 
-        # Random scenario if not specified
+        # Generate game code
+        game_code = str(uuid.uuid4())[:8].upper()
+
+        # Random scenario
         if scenario is None:
             scenarios = ["asylum", "factory", "ghost_village", "cursed_mansion", "mine", "prison", "abyss", "dead_forest", "research_hospital", "ghost_ship"]
             scenario_value = random.choice(scenarios)
@@ -100,7 +475,6 @@ class GameCommands(commands.Cog):
             scenario_value = scenario
 
         game_id = interaction.channel_id
-        host_id = interaction.user.id
 
         # Check if game already exists
         if await db_manager.execute_query(
@@ -108,13 +482,10 @@ class GameCommands(commands.Cog):
             (game_id,),
             fetchone=True
         ):
-            await interaction.followup.send(
-                "⚠️ Một trò chơi đang hoạt động trong kênh này.",
-                ephemeral=True
-            )
+            await interaction.followup.send("⚠️ Đã có phòng chơi trong kênh này.", ephemeral=True)
             return
 
-        # Clean old game data
+        # Clean old data
         await db_manager.execute_query("DELETE FROM players WHERE game_id = ?", (game_id,), commit=True)
         await db_manager.execute_query("DELETE FROM game_maps WHERE game_id = ?", (game_id,), commit=True)
         await db_manager.execute_query("DELETE FROM active_games WHERE channel_id = ?", (game_id,), commit=True)
@@ -129,13 +500,13 @@ class GameCommands(commands.Cog):
         # Create private channel
         try:
             private_channel = await interaction.guild.create_text_channel(
-                name=f"phong-choi-{random.randint(1, 999)}",  # Generic name: phong-choi-[number]
+                name=f"phong-choi-{random.randint(1, 999)}",
                 category=None,
                 overwrites={
                     interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
                     interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=False)
                 },
-                reason="Tạo kênh riêng cho trò chơi"
+                reason="Tạo kênh riên cho trò chơi"
             )
         except discord.Forbidden:
             await interaction.followup.send("❌ Bot không có quyền tạo kênh.", ephemeral=True)
@@ -148,9 +519,9 @@ class GameCommands(commands.Cog):
         await db_manager.execute_query(
             """INSERT INTO active_games 
                (channel_id, private_channel_id, host_id, game_creator_id, scenario_type, is_active, 
-                current_turn, waiting_room_stage) 
-               VALUES (?, ?, ?, ?, ?, 1, 1, 1)""",
-            (game_id, private_channel.id, host_id, host_id, scenario_value),
+                current_turn, waiting_room_stage, game_code) 
+               VALUES (?, ?, ?, ?, ?, 1, 1, 0, ?)""",
+            (game_id, private_channel.id, interaction.user.id, interaction.user.id, scenario_value, game_code),
             commit=True
         )
         await db_manager.execute_query(
@@ -160,101 +531,75 @@ class GameCommands(commands.Cog):
         )
 
         # Add host as first player
-        await self.add_player_to_game(host_id, game_id, game_map.start_node_id)
+        await self.add_player_to_game(interaction.user.id, game_id, game_map.start_node_id)
 
         # Notify in main channel
         await interaction.followup.send(
-            f"🎮 **Trò chơi mới!** {private_channel.mention}\n"
-            f"Kịch bản: {scenario_value}\n"
-            f"💀 Gõ `/join` để tham gia!"
+            f"🎮 **Phòng Mới!** {private_channel.mention}\n"
+            f"Kịch Bản: `{scenario_value}`\n"
+            f"Mã Phòng: `{game_code}`"
         )
 
-        # Send waiting room message in private channel
-        dark_rules = await llm_service.generate_dark_rules(scenario_value)
-        waiting_greeting = await llm_service.generate_waiting_room_message(1, 8)
-
-        waiting_message = f"""**━━━━━━━━━━━━━━━━━━━**
-{waiting_greeting}
-
-**📜 QUY TẮC QUỶ DỊ CỦA THẾ GIỚI NÀY:**
-{dark_rules}
-
-**Đang chờ xác nhận: 1/8**
-Nhấn ✅ để xác nhận tham gia trò chơi!
-Nhấn ❌ để từ chối rời phòng.
-
-Nếu bạn vô tình ấn ❌, bạn vẫn có thể `/join` lại nếu phòng chưa bắt đầu.
-**━━━━━━━━━━━━━━━━━━━**"""
-
-        view = WaitingRoomView(game_id)
-        msg = await private_channel.send(waiting_message, view=view)
-        
-        await db_manager.execute_query(
-            "UPDATE active_games SET waiting_room_message_id = ? WHERE channel_id = ?",
-            (msg.id, game_id),
-            commit=True
-        )
+        # Create join menu in private channel
+        await update_join_menu_embed(self.bot, game_id, game_code)
 
     @app_commands.command(
         name="join",
-        description="👻 Tham gia trò chơi"
+        description="👻 Tham gia phòng chơi bằng mã"
     )
-    async def join_game(self, interaction: discord.Interaction):
+    @app_commands.describe(code="🔑 Mã phòng (Room Code)")
+    async def join_by_code(self, interaction: discord.Interaction, code: str):
         await interaction.response.defer()
 
-        game_id = interaction.channel_id
+        # Find game by code - need to search all games
+        all_games = await db_manager.execute_query(
+            "SELECT * FROM active_games WHERE is_active = 1",
+            (),
+            fetchall=True
+        )
+
+        target_game = None
+        if all_games:
+            for g in all_games:
+                if g.get('game_code') == code:
+                    target_game = g
+                    break
+        
+        if not target_game:
+            await interaction.followup.send("❌ Mã phòng không tồn tại.", ephemeral=True)
+            return
+
+        game_id = target_game['channel_id']
         user_id = interaction.user.id
 
-        # Check if user is already in another game
-        current_game = await db_manager.get_player_current_game(user_id)
-        if current_game and current_game != game_id:
-            await interaction.followup.send(
-                "⚠️ Bạn đang tham gia một trò chơi khác! Hãy `/endgame` trước.",
-                ephemeral=True
-            )
-            return
-
-        # Get game info
-        game = await db_manager.execute_query(
-            "SELECT * FROM active_games WHERE channel_id = ? AND is_active = 1",
-            (game_id,),
-            fetchone=True
-        )
-        if not game:
-            await interaction.followup.send(
-                "❌ Không có trò chơi nào trong kênh này.",
-                ephemeral=True
-            )
-            return
-
-        # Check if already in this game
+        # Check if already in game
         if await db_manager.check_player_in_game(user_id, game_id):
-            await interaction.followup.send(
-                "⚠️ Bạn đã tham gia trò chơi này rồi!",
-                ephemeral=True
-            )
+            await interaction.followup.send("⚠️ Bạn đã tham gia phòng này!", ephemeral=True)
             return
 
-        # Get map info
+        # Check if already in another game
+        current_game = await db_manager.get_player_current_game(user_id)
+        if current_game:
+            await interaction.followup.send("⚠️ Bạn đang tham gia một phòng khác!", ephemeral=True)
+            return
+
+        # Get map
         game_map_data = await db_manager.execute_query(
             "SELECT map_data FROM game_maps WHERE game_id = ?",
             (game_id,),
             fetchone=True
         )
         if not game_map_data:
-            await interaction.followup.send("❌ Lỗi: Dữ liệu bản đồ bị mất.", ephemeral=True)
+            await interaction.followup.send("❌ Lỗi dữ liệu.", ephemeral=True)
             return
 
         map_nodes = json.loads(game_map_data['map_data'])
         start_node_id = list(map_nodes.get('nodes', {}).keys())[0] if map_nodes.get('nodes') else None
-        if not start_node_id:
-            await interaction.followup.send("❌ Lỗi: Bản đồ bị hỏng.", ephemeral=True)
-            return
 
-        # Create player profile
-        profile = await background_service.create_player_profile(game['scenario_type'])
+        # Create profile
+        profile = await background_service.create_player_profile(target_game['scenario_type'])
 
-        # Add to database
+        # Add player
         await db_manager.execute_query(
             """INSERT INTO players 
                (user_id, game_id, background_id, background_name, background_description,
@@ -266,140 +611,69 @@ Nếu bạn vô tình ấn ❌, bạn vẫn có thể `/join` lại nếu phòng
             commit=True
         )
 
-        # Grant private channel access
-        private_channel = self.bot.get_channel(game['private_channel_id'])
+        # Grant access
+        private_channel = self.bot.get_channel(target_game['private_channel_id'])
         if private_channel:
             await private_channel.set_permissions(
                 interaction.user,
                 read_messages=True,
                 send_messages=False
             )
-
-        # Update waiting room message
-        if game['waiting_room_stage'] == 1:  # Still in waiting room
-            await self.update_waiting_room(private_channel, game_id)
+            await update_join_menu_embed(self.bot, game_id, code)
 
         await interaction.followup.send(
-            f"✅ {interaction.user.mention} tham gia với background: **{profile['background_name']}**",
+            f"✅ Đã vào phòng `{code}`!\nBackground: **{profile['background_name']}**",
             ephemeral=False,
             delete_after=5
         )
 
     @app_commands.command(
-        name="startgame",
-        description="🚀 Bắt đầu trò chơi (sau khi tất cả xác nhận)"
+        name="readyup",
+        description="✅ Xác nhận sẵn sàng chơi (từ phòng chờ)"
     )
-    async def start_game(self, interaction: discord.Interaction):
+    async def ready_up(self, interaction: discord.Interaction):
         await interaction.response.defer()
 
         game_id = interaction.channel_id
         user_id = interaction.user.id
 
-        # Check if user is game creator
-        creator_id = await db_manager.get_game_creator(game_id)
-        if user_id != creator_id:
-            await interaction.followup.send(
-                "❌ Chỉ người tạo game mới có thể bắt đầu trò chơi!",
-                ephemeral=True
-            )
-            return
-
         game = await db_manager.execute_query(
-            "SELECT * FROM active_games WHERE channel_id = ? AND is_active = 1",
+            "SELECT * FROM active_games WHERE channel_id = ?",
             (game_id,),
             fetchone=True
         )
+
         if not game:
-            await interaction.followup.send("❌ Không có trò chơi nào.", ephemeral=True)
+            await interaction.followup.send("❌ Không có phòng nào.", ephemeral=True)
             return
 
         if game['waiting_room_stage'] != 1:
             await interaction.followup.send(
-                "⚠️ Trò chơi không ở giai đoạn chờ!",
+                "❌ Không ở trong phòng chờ!",
                 ephemeral=True
             )
             return
 
-        # Get confirmation status
+        # Mark as confirmed
+        await db_manager.execute_query(
+            "UPDATE players SET waiting_room_confirmed = 1 WHERE user_id = ? AND game_id = ?",
+            (user_id, game_id),
+            commit=True
+        )
+
+        await interaction.followup.send(
+            f"✅ {interaction.user.mention} sẵn sàng!",
+            ephemeral=False,
+            delete_after=3
+        )
+
+        # Update waiting room
+        await update_waiting_room_embed(self.bot, game_id)
+
+        # Check if all confirmed
         confirmations = await db_manager.get_waiting_room_confirmations(game_id)
-        if confirmations['confirmed'] == 0:
-            await interaction.followup.send(
-                "❌ Không có ai xác nhận! Chờ người chơi xác nhận trước.",
-                ephemeral=True
-            )
-            return
-
-        # Mark game as started
-        await db_manager.execute_query(
-            "UPDATE active_games SET waiting_room_stage = 2 WHERE channel_id = ?",
-            (game_id,),
-            commit=True
-        )
-
-        # Get private channel
-        private_channel = self.bot.get_channel(game['private_channel_id'])
-        if not private_channel:
-            return
-
-        # Send startup message
-        startup_msg = f"""**🎮 TRÒ CHƠI KINH DÍ BẮT ĐẦU!**
-
-Các người chơi đã xác nhận: {confirmations['confirmed']}/{confirmations['total']}
-
-Những người chơi khác (chưa xác nhận) sẽ bị loại khỏi trò chơi.
-"""
-        await private_channel.send(startup_msg)
-
-        # Remove players who didn't confirm
-        for player in confirmations['players']:
-            if not player.get('waiting_room_confirmed'):
-                await db_manager.execute_query(
-                    "DELETE FROM players WHERE user_id = ? AND game_id = ?",
-                    (player['user_id'], game_id),
-                    commit=True
-                )
-
-        # Send initial scene
-        intro_description = await scenario_generator.generate_turn_intro(game['scenario_type'], 1, 1)
-
-        # Get all players and format as plain text
-        players = await db_manager.execute_query(
-            "SELECT user_id, background_name, hp, sanity FROM players WHERE game_id = ?",
-            (game_id,),
-            fetchall=True
-        )
-
-        players_info = "\n".join([
-            f"👤 {p['background_name']} | HP: {p['hp']} | Sanity: {p['sanity']}"
-            for p in players
-        ])
-
-        scene_text = f"""**━━━━━━━━━━━━━━━━━━━**
-**LƯỢT 1**
-
-{intro_description}
-
-**📊 CÁC NGƯỜI CHƠI:**
-{players_info}
-
-**⏱️ Đang đếm ngược...**
-**━━━━━━━━━━━━━━━━━━━**"""
-
-        # Post game message
-        game_msg = await private_channel.send(scene_text)
-
-        await db_manager.execute_query(
-            "UPDATE active_games SET dashboard_message_id = ? WHERE channel_id = ?",
-            (game_msg.id, game_id),
-            commit=True
-        )
-
-        # Start turn manager
-        turn_manager = game_engine.game_manager.get_manager(game_id, publish_callback=self.publish_turn_results)
-        await turn_manager.start_turn()
-
-        # Start countdown update task
-        asyncio.create_task(self.update_game_countdown(game_msg, game_id, TURN_TIME_SECONDS))
+        if confirmations['confirmed'] > 0 and confirmations['confirmed'] == confirmations['total']:
+            await start_game_from_waiting_room(self.bot, game_id)
 
     @app_commands.command(
         name="endgame",
@@ -420,24 +694,19 @@ Những người chơi khác (chưa xác nhận) sẽ bị loại khỏi trò ch
             await interaction.followup.send("❌ Không có trò chơi nào.", ephemeral=True)
             return
 
-        # Check if user is creator or if voting majority wants to end
         creator_id = await db_manager.get_game_creator(game_id)
         
         if user_id == creator_id:
-            # Creator can end immediately
             await self.cleanup_game(game_id)
-            await interaction.followup.send("✅ Người tạo game đã kết thúc trò chơi.", ephemeral=False)
+            await interaction.followup.send("✅ Trò chơi đã kết thúc.", ephemeral=False)
         else:
-            # Regular player starts a vote
             await interaction.followup.send(
-                f"🗳️ {interaction.user.mention} yêu cầu bỏ phiếu kết thúc game.\n"
-                "Cần 50%+ đồng ý để kết thúc.\n"
-                "(Hoặc chỉ người tạo game mới có thể kết thúc ngay)",
-                ephemeral=False
+                "❌ Chỉ người tạo game mới có thể kết thúc!",
+                ephemeral=True
             )
 
     async def cleanup_game(self, game_id: int):
-        """Clean up game from database and delete private channel."""
+        """Clean up game."""
         game = await db_manager.execute_query(
             "SELECT * FROM active_games WHERE channel_id = ? AND is_active = 1",
             (game_id,),
@@ -446,17 +715,14 @@ Những người chơi khác (chưa xác nhận) sẽ bị loại khỏi trò ch
         if not game:
             return
 
-        # Stop game manager
         game_engine.game_manager.end_game(game_id)
 
-        # Mark inactive
         await db_manager.execute_query(
             "UPDATE active_games SET is_active = 0 WHERE channel_id = ?",
             (game_id,),
             commit=True
         )
 
-        # Delete private channel
         if game['private_channel_id']:
             try:
                 channel = self.bot.get_channel(game['private_channel_id'])
@@ -465,124 +731,8 @@ Những người chơi khác (chưa xác nhận) sẽ bị loại khỏi trò ch
             except:
                 pass
 
-    async def update_waiting_room(self, channel: discord.TextChannel, game_id: int):
-        """Update waiting room message with current confirmations."""
-        game = await db_manager.execute_query(
-            "SELECT waiting_room_message_id FROM active_games WHERE channel_id = ?",
-            (game_id,),
-            fetchone=True
-        )
-        if not game or not game['waiting_room_message_id']:
-            return
-
-        confirmations = await db_manager.get_waiting_room_confirmations(game_id)
-        total_confirmed = confirmations['confirmed']
-        total_players = confirmations['total']
-
-        try:
-            msg = await channel.fetch_message(game['waiting_room_message_id'])
-            waiting_msg = f"""**━━━━━━━━━━━━━━━━━━━**
-Đang chờ tất cả người chơi xác nhận...
-
-**Đã xác nhận: {total_confirmed}/{total_players}**
-
-Nhấn ✅ để xác nhận và bắt đầu!
-Nhấn ❌ để rời phòng chờ.
-**━━━━━━━━━━━━━━━━━━━**"""
-            await msg.edit(content=waiting_msg)
-        except:
-            pass
-
-    async def update_game_countdown(self, message: discord.Message, game_id: int, duration: int):
-        """Update the same message with countdown timer (plain text)."""
-        start_time = time.time()
-        end_time = start_time + duration
-
-        try:
-            while time.time() < end_time:
-                remaining = int(end_time - time.time())
-                minutes = remaining // 60
-                seconds = remaining % 60
-
-                # Get current game state
-                game = await db_manager.execute_query(
-                    "SELECT current_turn FROM active_games WHERE channel_id = ? AND is_active = 1",
-                    (game_id,),
-                    fetchone=True
-                )
-                if not game:
-                    break
-
-                # Get players info
-                players = await db_manager.execute_query(
-                    "SELECT user_id, background_name, hp, sanity FROM players WHERE game_id = ?",
-                    (game_id,),
-                    fetchall=True
-                )
-
-                players_info = "\n".join([
-                    f"👤 {p['background_name']} | HP: {p['hp']} | Sanity: {p['sanity']}"
-                    for p in players
-                ])
-
-                content = f"""**━━━━━━━━━━━━━━━━━━━**
-**LƯỢT {game['current_turn']}**
-
-Tình hình đang phát triển...
-
-**📊 CÁC NGƯỜI CHƠI:**
-{players_info}
-
-**⏱️ Thời gian còn lại: {minutes}:{seconds:02d}**
-**━━━━━━━━━━━━━━━━━━━**"""
-
-                try:
-                    await message.edit(content=content)
-                except:
-                    break
-
-                await asyncio.sleep(2)  # Update every 2 seconds
-
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            print(f"Countdown error: {e}")
-
-    async def publish_turn_results(self, game_id: int, summary: str, turn_events: list):
-        """Publish turn results in plain text."""
-        game = await db_manager.execute_query(
-            "SELECT private_channel_id FROM active_games WHERE channel_id = ?",
-            (game_id,),
-            fetchone=True
-        )
-        if not game or not game['private_channel_id']:
-            return
-
-        channel = self.bot.get_channel(game['private_channel_id'])
-        if not channel:
-            return
-
-        # Format results as plain text
-        events_text = "\n".join([f"• {event}" for event in turn_events])
-        result_text = f"""**━━━━━━━━━━━━━━━━━━━**
-**📜 KẾT QUẢ LƯỢT**
-
-{summary}
-
-**Sự kiện:**
-{events_text}
-
-**Đang chuyển sang lượt tiếp theo...**
-**━━━━━━━━━━━━━━━━━━━**"""
-
-        await channel.send(result_text)
-
-        # Update main game message with countdown for next turn
-        manager = game_engine.game_manager.get_manager(game_id)
-        await manager.start_thinking_phase(duration=THINKING_PHASE_SECONDS)
-
     async def add_player_to_game(self, user_id, game_id, start_location_id):
-        """Helper to add player (for host)."""
+        """Add host as first player."""
         background = {
             "id": "athlete",
             "name": "Vận Động Viên",
@@ -618,7 +768,7 @@ Tình hình đang phát triển...
         except discord.NotFound:
             return
 
-        # Find game by message
+        # Find game by dashboard message
         game = await db_manager.execute_query(
             "SELECT * FROM active_games WHERE dashboard_message_id = ? AND is_active = 1",
             (payload.message_id,),
@@ -639,7 +789,7 @@ Tình hình đang phát triển...
         if not action:
             return
 
-        # Check if player is in game
+        # Check if player in game
         player = await db_manager.execute_query(
             "SELECT 1 FROM players WHERE user_id = ? AND game_id = ?",
             (user_id, game_id),
@@ -656,23 +806,12 @@ Tình hình đang phát triển...
                 if user:
                     try:
                         await message.reply(
-                            f"🎉 {user.mention} **xác nhận hành động!**",
+                            f"🎉 {user.mention} **xác nhận!**",
                             delete_after=5
                         )
                     except:
                         pass
-        elif action == "skip":
-            user = guild.get_member(user_id)
-            if user:
-                try:
-                    await message.reply(
-                        f"⏭️ {user.mention} **bỏ qua lượt này.**",
-                        delete_after=5
-                    )
-                except:
-                    pass
         else:
-            # Register action
             await game_engine.register_action(user_id, game_id, action)
             action_names = {"attack": "Tấn Công", "flee": "Chạy Trốn", "search": "Tìm Kiếm"}
             user = guild.get_member(user_id)
@@ -688,4 +827,3 @@ Tình hình đang phát triển...
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(GameCommands(bot))
-

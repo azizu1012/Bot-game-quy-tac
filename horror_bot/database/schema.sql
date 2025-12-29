@@ -5,10 +5,12 @@ CREATE TABLE IF NOT EXISTS active_games (
     host_id INTEGER,             -- Game creator
     game_creator_id INTEGER,     -- Người tạo game (có quyền end game)
     scenario_type TEXT,
+    game_code TEXT,              -- Mã phòng unique để join by code
     current_turn INTEGER DEFAULT 0,
     turn_deadline_ts REAL, -- Timestamp thời điểm hết giờ
     is_active BOOLEAN DEFAULT 1,
     waiting_room_stage INTEGER DEFAULT 0, -- 0=chưa vào waiting room, 1=waiting for confirmation, 2=all confirmed ready to start
+    join_menu_message_id INTEGER,  -- Join menu message
     waiting_room_message_id INTEGER,  -- Thông báo waiting room
     dashboard_message_id INTEGER
 );

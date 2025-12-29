@@ -153,3 +153,32 @@ Viết lời chào cho phòng chờ.<|im_end|>
         return output['choices'][0]['text'].strip()
 
     return await loop.run_in_executor(None, run_inference)
+
+async def generate_world_lore(scenario_type: str) -> str:
+    """Generate detailed world lore for the scenario (can be long, will be chunked)."""
+    if _llm is None:
+        return "Thế giới bí ẩn... (AI chưa load)"
+
+    prompt = f"""<|im_start|>system
+Bạn là một tác giả tiểu thuyết kinh dị. Hãy viết lore chi tiết (300-400 từ) cho một thế giới kinh dí scenario '{scenario_type}'. 
+Tone: huyền bí, đáng sợ, chi tiết, như các tiểu thuyết Trung Quốc cổ.
+Mô tả: nguyên nhân bí ẩn, các quy tắc quỷ dị, những gì đang xảy ra, cảm giác khó chịu, các yếu tố siêu nhiên.
+Viết bằng tiếng Việt, giữ âm hưởng ma quái.<|im_end|>
+<|im_start|>user
+Viết lore chi tiết cho scenario này.<|im_end|>
+<|im_start|>assistant
+"""
+
+    loop = asyncio.get_running_loop()
+    
+    def run_inference():
+        output = _llm(
+            prompt,
+            max_tokens=500,
+            stop=["<|im_end|>"],
+            echo=False,
+            temperature=0.8
+        )
+        return output['choices'][0]['text'].strip()
+
+    return await loop.run_in_executor(None, run_inference)
