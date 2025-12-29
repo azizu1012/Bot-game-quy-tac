@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands
 from services import game_engine
+from database import db_manager
 
 # --- UI Views (Buttons) ---
 
@@ -67,14 +68,24 @@ class GameDashboard(discord.Embed):
 class GameUICog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # In a real application, you would need a way to get the game_id for the view.
-        # This is simplified. You might load active games from the DB on startup.
-        # For now, we assume a game_id of 1 for demonstration.
-        self.bot.add_view(ActionView(game_id=1)) 
 
     @commands.Cog.listener()
     async def on_ready(self):
         print("Game UI Cog is ready.")
+        # Load all active game views from database
+        await self.load_active_game_views()
+
+    async def load_active_game_views(self):
+        """Load ActionView for all active games from database."""
+        active_games = await db_manager.execute_query(
+            "SELECT channel_id FROM active_games WHERE is_active = 1",
+            fetchall=True
+        )
+        if active_games:
+            for game in active_games:
+                game_id = game['channel_id']
+                self.bot.add_view(ActionView(game_id=game_id))
+                print(f"✅ Loaded ActionView for game {game_id}")
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(GameUICog(bot))

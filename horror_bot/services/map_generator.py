@@ -16,6 +16,17 @@ class MapNode:
     def __repr__(self):
         return f"MapNode(id={self.id}, type={self.room_type})"
 
+    def to_dict(self):
+        """Convert MapNode to a dictionary for JSON serialization."""
+        return {
+            "id": self.id,
+            "room_type": self.room_type,
+            "description": self.description,
+            "connections": self.connections,
+            "entities": self.entities,
+            "events": self.events
+        }
+
 class MapStructure:
     """Represents the entire game map as a graph of nodes."""
     def __init__(self, scenario_name: str):
@@ -28,6 +39,14 @@ class MapStructure:
         self.nodes[node.id] = node
         if not self.start_node_id:
             self.start_node_id = node.id
+
+    def to_dict(self):
+        """Convert entire map structure to a serializable dictionary."""
+        return {
+            "scenario_name": self.scenario_name,
+            "start_node_id": self.start_node_id,
+            "nodes": {node_id: node.to_dict() for node_id, node in self.nodes.items()}
+        }
 
     def connect_nodes(self, from_node_id: str, to_node_id: str, direction: str):
         """Creates a two-way connection between nodes."""

@@ -33,7 +33,7 @@ class TurnManager:
         self.game_id = game_id
         self.manager = manager
         self.turn_task = None
-        self.processing = False # Lock to prevent race conditions
+        self.processing_lock = asyncio.Lock()  # Thread-safe lock
         self.publish_callback = publish_callback
 
     async def start_turn(self):
@@ -82,58 +82,67 @@ class TurnManager:
 
     async def process_turn_results(self, timed_out: bool = False):
         """Calculates the outcome of the turn and prepares for the next one."""
-        if self.processing: # Prevent race condition if called simultaneously
-            return
-        self.processing = True
-        
-        print(f"Game {self.game_id}: Processing turn results...")
-        turn_events = []
+        async with self.processing_lock:  # Use lock to prevent race conditions
+            print(f"Game {self.game_id}: Processing turn results...")
+            turn_events = []
 
-        # 1. Apply penalty for AFK players if the turn timed out
-        if timed_out:
-            afk_players = await db_manager.execute_query(
-                "SELECT user_id, sanity FROM players WHERE game_id = ? AND has_acted_this_turn = 0 AND hp > 0",
-                (self.game_id,), fetchall=True
-            )
-            penalty_sanity = 10
-            for player_row in afk_players:
-                await db_manager.execute_query(
-                    "UPDATE players SET sanity = sanity - ? WHERE user_id = ? AND game_id = ?",
-                    (penalty_sanity, player_row['user_id'], self.game_id), commit=True
+            try:
+                # 1. Apply penalty for AFK players if the turn timed out
+                if timed_out:
+                    afk_players = await db_manager.execute_query(
+                        "SELECT user_id, sanity FROM players WHERE game_id = ? AND has_acted_this_turn = 0 AND hp > 0",
+                        (self.game_id,), fetchall=True
+                    )
+                    penalty_sanity = 10
+                    for player_row in afk_players:
+                        await db_manager.execute_query(
+                            "UPDATE players SET sanity = sanity - ? WHERE user_id = ? AND game_id = ?",
+                            (penalty_sanity, player_row['user_id'], self.game_id), commit=True
+                        )
+                        turn_events.append(f"<@{player_row['user_id']}> was slow to react and lost {penalty_sanity} sanity!")
+
+                # 2. Process actions (this is a simplified example)
+                # In a real game, you'd have monster AI, check locations, etc.
+                actions = await db_manager.execute_query(
+                    "SELECT user_id, action_this_turn FROM players WHERE game_id = ? AND has_acted_this_turn = 1",
+                    (self.game_id,), fetchall=True
                 )
-                turn_events.append(f"<@{player_row['user_id']}> was slow to react and lost {penalty_sanity} sanity!")
-
-        # 2. Process actions (this is a simplified example)
-        # In a real game, you'd have monster AI, check locations, etc.
-        actions = await db_manager.execute_query(
-            "SELECT user_id, action_this_turn FROM players WHERE game_id = ? AND has_acted_this_turn = 1",
-            (self.game_id,), fetchall=True
-        )
-        for action in actions:
-            if action['action_this_turn'] == 'search':
-                turn_events.append(f"<@{action['user_id']}> found a dusty old coin.")
-            elif action['action_this_turn'] == 'attack':
-                turn_events.append(f"<@{action['user_id']}> swung wildly at the darkness.")
-        
-        # 3. Use LLM to generate a narrative summary of the turn
-        scene_keywords = ["darkness", "fear"] + [a['action_this_turn'] for a in actions if a['action_this_turn']]
-        summary = await llm_service.describe_scene(list(set(scene_keywords)))
-        
-        # 4. Reset player turn status for the next round
-        await db_manager.execute_query(
-            "UPDATE players SET has_acted_this_turn = 0, action_this_turn = NULL WHERE game_id = ?",
-            (self.game_id,), commit=True
-        )
-        
-        print(f"Game {self.game_id}: Turn processed. Summary: {summary}")
-        
-        # 5. Publish results via callback if it exists
-        if self.publish_callback:
-            await self.publish_callback(self.game_id, summary, turn_events)
-        
-        # 6. Start the next turn
-        self.processing = False
-        await self.start_turn()
+                for action in actions:
+                    if action['action_this_turn'] == 'search':
+                        turn_events.append(f"<@{action['user_id']}> found a dusty old coin.")
+                    elif action['action_this_turn'] == 'attack':
+                        turn_events.append(f"<@{action['user_id']}> swung wildly at the darkness.")
+                
+                # 3. Use LLM to generate a narrative summary of the turn
+                scene_keywords = ["darkness", "fear"] + [a['action_this_turn'] for a in actions if a['action_this_turn']]
+                summary = await asyncio.wait_for(
+                    llm_service.describe_scene(list(set(scene_keywords))),
+                    timeout=5.0  # 5 second timeout for LLM
+                )
+                
+                # 4. Reset player turn status for the next round
+                await db_manager.execute_query(
+                    "UPDATE players SET has_acted_this_turn = 0, action_this_turn = NULL WHERE game_id = ?",
+                    (self.game_id,), commit=True
+                )
+                
+                print(f"Game {self.game_id}: Turn processed. Summary: {summary}")
+                
+                # 5. Publish results via callback if it exists
+                if self.publish_callback:
+                    try:
+                        await self.publish_callback(self.game_id, summary, turn_events)
+                    except Exception as e:
+                        print(f"Game {self.game_id}: Error in publish_callback: {e}")
+                
+                # 6. Start the next turn
+                await self.start_turn()
+            except asyncio.TimeoutError:
+                print(f"Game {self.game_id}: LLM timeout, skipping description")
+                await self.start_turn()
+            except Exception as e:
+                print(f"Game {self.game_id}: Error processing turn: {e}")
+                await self.start_turn()
 
 
 # --- RPG Calculation Functions ---

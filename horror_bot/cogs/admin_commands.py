@@ -26,12 +26,10 @@ class AdminCommands(commands.Cog):
         # Clean up the game manager instance to stop any running tasks
         game_engine.game_manager.end_game(game_id)
 
-        # Use a transaction to delete all related data
-        async with db_manager.get_db_connection() as db:
-            await db.execute("DELETE FROM players WHERE game_id = ?", (game_id,))
-            await db.execute("DELETE FROM game_maps WHERE game_id = ?", (game_id,))
-            await db.execute("DELETE FROM active_games WHERE channel_id = ?", (game_id,))
-            await db.commit()
+        # Delete all related data
+        await db_manager.execute_query("DELETE FROM players WHERE game_id = ?", (game_id,), commit=True)
+        await db_manager.execute_query("DELETE FROM game_maps WHERE game_id = ?", (game_id,), commit=True)
+        await db_manager.execute_query("DELETE FROM active_games WHERE channel_id = ?", (game_id,), commit=True)
 
         await interaction.response.send_message("The game has been forcibly ended and all data has been cleared.", ephemeral=False)
 

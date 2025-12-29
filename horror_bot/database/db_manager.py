@@ -12,7 +12,10 @@ DB_PATH = os.path.join(os.path.dirname(BASE_DIR), "horror_bot.db")
 SCHEMA_PATH = os.path.join(BASE_DIR, "schema.sql")
 
 async def get_db_connection():
-    return await aiosqlite.connect(DB_PATH)
+    """Get a database connection with row factory set to aiosqlite.Row."""
+    db = await aiosqlite.connect(DB_PATH)
+    db.row_factory = aiosqlite.Row
+    return db
 
 async def setup_database():
     """Hàm này sẽ đọc file schema.sql và tạo bảng"""
@@ -40,15 +43,17 @@ async def setup_database():
                 print(f"❌ Lỗi SQL khi tạo bảng: {e}")
 
 async def execute_query(query, params=(), commit=False, fetchone=False, fetchall=False):
-    """Hàm tiện ích để chạy query SQL an toàn"""
+    """Hàm tiện ích để chạy query SQL an toàn (trả về dict, không phải Row)"""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(query, params) as cursor:
             result = None
             if fetchone:
-                result = await cursor.fetchone()
+                row = await cursor.fetchone()
+                result = dict(row) if row else None
             elif fetchall:
-                result = await cursor.fetchall()
+                rows = await cursor.fetchall()
+                result = [dict(row) for row in rows] if rows else []
             
             if commit:
                 await db.commit()

@@ -11,15 +11,7 @@ import json
 class GameCommands(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-
-# Sửa thành cog_load (không cần @listener)
-    async def cog_load(self):
-        print("📥 Game Commands Cog loaded. Đang khởi tạo Database...")
-        try:
-            await setup_database()
-            print("✅ Database tables created successfully!")
-        except Exception as e:
-            print(f"❌ Database Init Error: {e}")
+        self.db_ready = False
 
     @app_commands.command(name="newgame", description="Starts a new horror RPG game in this channel.")
     @app_commands.describe(scenario="Choose the scenario for the game.")
@@ -49,7 +41,7 @@ class GameCommands(commands.Cog):
         )
         await db_manager.execute_query(
             "INSERT OR REPLACE INTO game_maps (game_id, map_data) VALUES (?, ?)",
-            (game_id, json.dumps(game_map.nodes)), commit=True
+            (game_id, json.dumps(game_map.to_dict())), commit=True  # Use to_dict()
         )
 
         await self.add_player_to_game(host_id, game_id, game_map.start_node_id)
