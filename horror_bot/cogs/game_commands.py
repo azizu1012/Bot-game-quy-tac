@@ -1,7 +1,8 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-from database import db_manager, setup_database
+from database import db_manager
+from database.db_manager import setup_database
 from services import map_generator, game_engine
 from cogs.game_ui import GameDashboard, ActionView
 import os

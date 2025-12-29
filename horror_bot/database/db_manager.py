@@ -1,37 +1,37 @@
 import aiosqlite
 import os
 
-DB_FILE = "horror_bot/database/game.db"
-SCHEMA_FILE = "horror_bot/database/schema.sql"
+DB_PATH = "horror_bot.db"
+SCHEMA_PATH = "database/schema.sql"
 
 async def get_db_connection():
-    """Establishes an async connection to the SQLite database."""
-    db = await aiosqlite.connect(DB_FILE)
-    db.row_factory = aiosqlite.Row
-    return db
+    return await aiosqlite.connect(DB_PATH)
 
 async def setup_database():
-    """Sets up the database by creating tables from the schema file."""
-    if os.path.exists(DB_FILE):
-        print("Database already exists.")
+    """Hàm này sẽ đọc file schema.sql và tạo bảng nếu chưa có"""
+    if not os.path.exists(SCHEMA_PATH):
+        print(f"❌ Error: Schema file not found at {SCHEMA_PATH}")
         return
 
-    print("Setting up new database...")
-    async with aiosqlite.connect(DB_FILE) as db:
-        with open(SCHEMA_FILE, 'r') as f:
+    print("Checking database schema...")
+    async with aiosqlite.connect(DB_PATH) as db:
+        with open(SCHEMA_PATH, 'r', encoding='utf-8') as f:
             schema = f.read()
-        await db.executescript(schema)
-        await db.commit()
-    print("Database setup complete.")
-
-async def execute_query(query, params=(), fetchone=False, fetchall=False, commit=False):
-    """A utility function to execute database queries."""
-    async with aiosqlite.connect(DB_FILE) as db:
-        cursor = await db.execute(query, params)
-        if fetchone:
-            return await cursor.fetchone()
-        if fetchall:
-            return await cursor.fetchall()
-        if commit:
+            await db.executescript(schema)
             await db.commit()
-            return cursor.lastrowid
+    print("✅ Database schema initialized.")
+
+async def execute_query(query, params=(), commit=False, fetchone=False, fetchall=False):
+    """Hàm tiện ích để chạy query SQL an toàn"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row # Để kết quả trả về dạng Dictionary
+        async with db.execute(query, params) as cursor:
+            result = None
+            if fetchone:
+                result = await cursor.fetchone()
+            elif fetchall:
+                result = await cursor.fetchall()
+            
+            if commit:
+                await db.commit()
+            return result
