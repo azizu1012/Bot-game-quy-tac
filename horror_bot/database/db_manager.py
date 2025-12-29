@@ -58,3 +58,45 @@ async def execute_query(query, params=(), commit=False, fetchone=False, fetchall
             if commit:
                 await db.commit()
             return result
+
+# ===== HELPER FUNCTIONS FOR GAME MANAGEMENT =====
+
+async def get_player_current_game(user_id: int) -> int | None:
+    """Kiểm tra người chơi hiện đang tham gia game nào (nếu có)."""
+    result = await execute_query(
+        """SELECT game_id FROM players 
+           WHERE user_id = ? 
+           AND game_id IN (SELECT channel_id FROM active_games WHERE is_active = 1)""",
+        (user_id,),
+        fetchone=True
+    )
+    return result['game_id'] if result else None
+
+async def check_player_in_game(user_id: int, game_id: int) -> bool:
+    """Kiểm tra người chơi đã trong game này chưa."""
+    result = await execute_query(
+        "SELECT 1 FROM players WHERE user_id = ? AND game_id = ?",
+        (user_id, game_id),
+        fetchone=True
+    )
+    return result is not None
+
+async def get_waiting_room_confirmations(game_id: int) -> dict:
+    """Lấy số người đã confirm và chưa confirm trong waiting room."""
+    players = await execute_query(
+        "SELECT user_id, waiting_room_confirmed FROM players WHERE game_id = ?",
+        (game_id,),
+        fetchall=True
+    )
+    confirmed = sum(1 for p in players if p.get('waiting_room_confirmed'))
+    total = len(players)
+    return {"confirmed": confirmed, "total": total, "players": players}
+
+async def get_game_creator(game_id: int) -> int | None:
+    """Lấy ID của người tạo game."""
+    result = await execute_query(
+        "SELECT game_creator_id FROM active_games WHERE channel_id = ?",
+        (game_id,),
+        fetchone=True
+    )
+    return result['game_creator_id'] if result else None

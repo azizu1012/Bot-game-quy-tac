@@ -2,11 +2,14 @@
 CREATE TABLE IF NOT EXISTS active_games (
     channel_id INTEGER PRIMARY KEY,
     private_channel_id INTEGER,  -- Kênh riêng cho trò chơi này
-    host_id INTEGER,
+    host_id INTEGER,             -- Game creator
+    game_creator_id INTEGER,     -- Người tạo game (có quyền end game)
     scenario_type TEXT,
     current_turn INTEGER DEFAULT 0,
     turn_deadline_ts REAL, -- Timestamp thời điểm hết giờ
     is_active BOOLEAN DEFAULT 1,
+    waiting_room_stage INTEGER DEFAULT 0, -- 0=chưa vào waiting room, 1=waiting for confirmation, 2=all confirmed ready to start
+    waiting_room_message_id INTEGER,  -- Thông báo waiting room
     dashboard_message_id INTEGER
 );
 
@@ -37,6 +40,7 @@ CREATE TABLE IF NOT EXISTS players (
     has_acted_this_turn BOOLEAN DEFAULT 0, -- Check để xử lý Timeout
     action_this_turn TEXT,                 -- The action taken (e.g., 'attack', 'flee')
     confirmed_action BOOLEAN DEFAULT 0,    -- Đã confirm action chưa
+    waiting_room_confirmed BOOLEAN DEFAULT 0, -- Confirm vào waiting room chưa
     
     current_location_id TEXT,
     inventory JSON,
