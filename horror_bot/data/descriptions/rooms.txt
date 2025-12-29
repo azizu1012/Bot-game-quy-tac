@@ -1,10 +1,20 @@
-A dusty bedroom with a single, unmade bed.
-A grand ballroom, eerily silent except for the creaking floorboards.
-A cold, sterile operating room.
-A child's playroom, with a lone rocking horse swaying gently.
-A long, dark hallway with flickering lights.
-A library with books scattered all over the floor.
-A kitchen, with the faint smell of decay.
-A damp, musty basement.
-A rooftop, with a chilling view of the desolate city below.
-A claustrophobic elevator, stuck between floors.
+Một phòng ngủ bụi bặm, giường một chiếc chưa gấp.
+Một phòng khiêu vũ to lớn, yên tĩnh kinh khủng ngoài tiếng sàn kêu.
+Một phòng mổ lạnh buốt, sạch sẽ đến quá mức.
+Một phòng chơi em bé, có một chiếc ngựa bập bênh gỗ.
+Một hành lang dài tối đen, đèn nhấp nháy lẫn lô.
+Một thư viện, sách rải rác khắp sàn nhà.
+Một bếp, mùi mục rữa từ từ thoát ra.
+Một tầng hầm ẩm ướt, mùi mốc nồn nặc.
+Một mái nhà, cảnh thành phố hoang vắng lạnh lẽo.
+Một thang máy chật chội, mắc kẹt giữa các tầng.
+Một phòng bộ xương, xương trắng sắp xếp trên kệ.
+Một phòng xưởng, máy móc gỉ sét kêu gào.
+Một phòng chiếu bóng, phim cũ chạy lặp lại.
+Một phòng chứa, tờ giấy cũ xếp chồng cao.
+Một phòng tắm công cộng, nước từ vòi chảy máu.
+Một phòng ẩm tắm, gương phủ sương.
+Một phòng khách, ghế sofa xổng bông lúm.
+Một phòng ăn, bàn ăn chết chóc máu.
+Một phòng chuột, những vết chuột trên tường.
+Một phòng bí mật, cửa khóa từ bên trong.

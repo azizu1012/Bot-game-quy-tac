@@ -1,0 +1,23 @@
+{
+  "name": "🏰 Lâu Đài Nguyền Rủa",
+  "description": "Lâu đài quý tộc được xây dựng trên ngôi mộ ma cà rồng, nơi ác quỷ hoành hành",
+  "theme": "cursed_mansion",
+  "difficulty": "hard",
+  "min_floors": 6,
+  "max_floors": 9,
+  "min_rooms_per_floor": 4,
+  "max_rooms_per_floor": 8,
+  "atmosphere": "Bức tường thở ra máu, những cô gái ma lờ mờ trong gương, tiếng nhạc phím buồn từ phòng trống",
+  "spawn_creatures": [
+    "quý_tộc_ma",
+    "cô_gái_ma",
+    "ác_quỷ_cổ",
+    "linh_hồn_bỏ_rơi",
+    "ma_giáo_sư",
+    "quỷ_hầu_cổ",
+    "bóng_ma_sương",
+    "thứ_máu_cổ",
+    "ma_thị_tính",
+    "quái_vật_hung_tàn"
+  ]
+}

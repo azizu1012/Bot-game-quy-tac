@@ -2,7 +2,7 @@ import asyncio
 import time
 import random
 from database import db_manager
-from config import TURN_TIME_SECONDS
+from config import TURN_TIME_SECONDS, THINKING_PHASE_SECONDS
 from services import llm_service, scenario_generator
 
 class GameManager:
@@ -33,9 +33,11 @@ class TurnManager:
         self.game_id = game_id
         self.manager = manager
         self.turn_task = None
+        self.thinking_task = None
         self.processing_lock = asyncio.Lock()  # Thread-safe lock
         self.publish_callback = publish_callback
         self.action_counts = {}  # Track action confirmations per action type
+        self.phase = "action"  # "action" or "thinking"
 
     async def start_turn(self):
         """Starts the countdown timer for a new turn."""
@@ -44,9 +46,10 @@ class TurnManager:
             (time.time() + TURN_TIME_SECONDS, self.game_id),
             commit=True
         )
-        # Reset actions untuk turn baru
+        # Reset actions để turn mới
         self.action_counts = {}
-        print(f"Game {self.game_id}: Turn started.")
+        self.phase = "action"
+        print(f"Game {self.game_id}: Turn started. Phase: action")
 
         # Schedule the turn processor to run after the timeout
         if self.turn_task:
@@ -61,6 +64,33 @@ class TurnManager:
             await self.process_turn_results(timed_out=True)
         except asyncio.CancelledError:
             print(f"Game {self.game_id}: Turn ended early by all players acting.")
+            pass
+
+    async def start_thinking_phase(self, duration: int = None):
+        """Starts the thinking/discussion phase before next turn."""
+        if duration is None:
+            duration = THINKING_PHASE_SECONDS
+        self.phase = "thinking"
+        print(f"Game {self.game_id}: Thinking phase started ({duration}s).")
+        
+        if self.thinking_task:
+            self.thinking_task.cancel()
+        self.thinking_task = asyncio.create_task(self.thinking_countdown(duration))
+
+    async def thinking_countdown(self, duration: int):
+        """Waits for thinking phase and then auto-starts next turn."""
+        try:
+            await asyncio.sleep(duration)
+            print(f"Game {self.game_id}: Thinking phase ended. Auto-starting next turn.")
+            # Publish "continuing" message then start turn
+            if self.publish_callback:
+                try:
+                    await self.publish_callback(self.game_id, "🎮 **LƯỢT MỚI BẮT ĐẦU!**", [])
+                except Exception as e:
+                    print(f"Game {self.game_id}: Error in thinking phase callback: {e}")
+            await self.start_turn()
+        except asyncio.CancelledError:
+            print(f"Game {self.game_id}: Thinking phase cancelled.")
             pass
 
     async def handle_player_action(self, user_id: int, action_type: str):

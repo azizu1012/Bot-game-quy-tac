@@ -1,10 +1,20 @@
-A grotesque amalgamation of flesh and metal.
-A swarm of oversized insects with glowing eyes.
-A creature that moves with an unnatural, disjointed gait.
-A slithering horror that leaves a trail of slime.
-A hulking beast with matted fur and razor-sharp claws.
-A creature made of living shadow.
-A mass of writhing tentacles.
-A humanoid figure with elongated limbs and a featureless face.
-A parasite that burrows into its host.
-A monstrosity that mimics human speech to lure its prey.
+Một vật thể ghép nối giữa thịt và kim loại, rên rỉ từng lúc.
+Một bầy côn trùng khổng lồ, mắt phát sáng vàng như tia lửa.
+Một sinh vật chuyển động không bình thường, khớp xương kêu gào.
+Một thứ trơn trượt để lại dấu vết chất dẻo dính như nước mũi.
+Một quái vật khổng lồ, lông xơ xác, móng vuốt sắc như dao.
+Một sinh vật được tạo từ bóng tối sống động.
+Một khối xương những trigger co giật vô định.
+Một hình nhân loài có tay chân kéo dài bất thường, mặt trơn trắng.
+Một ký sinh vật bò vào trong cơ thể nạn nhân để sinh sản.
+Một quái vật có tiếng nói người để lừa dụ con mồi.
+Một vật thể ba mặt, mỗi mặt là một loài vật khác nhau.
+Một quái vật với da như lửa lạnh, từng bước để lại tuyết mịn.
+Một thứ bò lên tường, không có chân nhưng chuyển động nhanh như gió.
+Một con quỷ với lông dài kỳ lạ, kêu tiếng con người từ trong miệng.
+Một thứ ẩn trong bóng tối, chỉ thấy được mắt sáng đỏ.
+Một quái vật nước có thể bước trên cạn, da như thủy tinh lạnh.
+Một thứ mềm dẻo, không có hình dạng, nuốt chửng sinh vật sống.
+Một sinh vật có mười cánh, bay lơ lửng trong bóng tối.
+Một quái vật với tay như gương, phản chiếu mọi thứ ngược lại.
+Một thứ có mùi như xác chết, lây lan bệnh tật khủng khiếp.

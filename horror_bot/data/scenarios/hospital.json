@@ -1,8 +1,23 @@
 {
-    "name": "Abandoned Asylum",
-    "description": "A derelict asylum where the whispers of former patients still echo through the halls.",
-    "min_floors": 2,
-    "max_floors": 4,
-    "min_rooms_per_floor": 8,
-    "max_rooms_per_floor": 15
+  "name": "🏥 Bệnh Viện Quỷ",
+  "description": "Một bệnh viện tâm thần bỏ hoang, tiếng thất thanh bệnh nhân còn vang vừng trong hành lang",
+  "theme": "hospital",
+  "difficulty": "medium",
+  "min_floors": 2,
+  "max_floors": 4,
+  "min_rooms_per_floor": 8,
+  "max_rooms_per_floor": 15,
+  "atmosphere": "Mùi thuốc cũ, tiếng kêu từ phòng cách ly, máy móc y tế vô dụng kêu xoay, máu trên tường",
+  "spawn_creatures": [
+    "bác_sĩ_điên",
+    "y_tá_ma",
+    "bệnh_nhân_biến_dạng",
+    "linh_hồn_phòng_mổ",
+    "quỷ_giường_bệnh",
+    "ma_dịch_bệnh",
+    "bóng_ma_xà_phòng",
+    "thứ_trong_tường",
+    "linh_hồn_nạo_hộp",
+    "quỷ_xe_đẩy"
+  ]
 }

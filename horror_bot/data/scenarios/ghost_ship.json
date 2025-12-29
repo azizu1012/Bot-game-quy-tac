@@ -1,0 +1,23 @@
+{
+  "name": "⛵ Tàu Ma",
+  "description": "Một chiếc tàu đắm từ lâu, nằm dưới đáy biển, toàn thủy quỷ và linh hồn thủy thủ",
+  "theme": "ghost_ship",
+  "difficulty": "hard",
+  "min_floors": 6,
+  "max_floors": 10,
+  "min_rooms_per_floor": 4,
+  "max_rooms_per_floor": 8,
+  "atmosphere": "Nước ngập khoảng, cá xanh lạ bơi quanh, tiếng thủy quỷ gọi từ dưới, sương mù xanh xao",
+  "spawn_creatures": [
+    "thủy_quỷ",
+    "thủy_thủ_ma",
+    "linh_hồn_chìm",
+    "quỷ_sương_muối",
+    "ma_khu_trục",
+    "bóng_ma_sóng",
+    "thứ_đầu_cá",
+    "quái_vật_biển_sâu",
+    "ma_sứ_mệnh",
+    "quỷ_lôi_cuốn"
+  ]
+}

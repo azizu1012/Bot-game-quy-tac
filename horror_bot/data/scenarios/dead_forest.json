@@ -1,0 +1,23 @@
+{
+  "name": "🌲 Rừng Chết",
+  "description": "Khu rừng cổ xưa, toàn cây héo khô, những động vật bị tiếng lặng âm ỷ quỷ",
+  "theme": "dead_forest",
+  "difficulty": "medium",
+  "min_floors": 1,
+  "max_floors": 3,
+  "min_rooms_per_floor": 10,
+  "max_rooms_per_floor": 20,
+  "atmosphere": "Những cây cổ ngàn năm héo khô, tiếng gầm của những thú dữ, mùi thối rếu, ánh trăng xanh ma",
+  "spawn_creatures": [
+    "quỷ_cây_cổ",
+    "thú_dữ_biến_dạng",
+    "linh_hồn_chim",
+    "ma_hươu",
+    "bóng_ma_gốc",
+    "quái_vật_rễ",
+    "thứ_săn_mồi",
+    "ma_đêm",
+    "quỷ_vương_hươu",
+    "linh_hồn_rừng"
+  ]
+}

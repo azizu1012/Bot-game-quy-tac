@@ -1,0 +1,23 @@
+{
+  "name": "🌑 Làng Quỷ",
+  "description": "Một ngôi làng cổ bị trơn vó, toàn là bóng ma cư dân và quái vật biến dạng",
+  "theme": "ghost_village",
+  "difficulty": "hard",
+  "min_floors": 1,
+  "max_floors": 3,
+  "min_rooms_per_floor": 8,
+  "max_rooms_per_floor": 15,
+  "atmosphere": "Những chiếc áo quần trơn vão, lao quanh nhà cửa, tiếng cười em bé vang vừng từ bóng tối",
+  "spawn_creatures": [
+    "cư_dân_quỷ",
+    "ma_trẻ_em",
+    "quỷ_bề_ngoài",
+    "linh_hồn_gia_chủ",
+    "bóng_ma_làng_xá",
+    "quái_vật_biến_hình",
+    "ma_chó_dã_man",
+    "tâm_linh_thú",
+    "quỷ_cây_cổ",
+    "thứ_lạ_lùng_xác_sống"
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "name": "⛏️ Mỏ Than Bỏ Hoang",
+  "description": "Mỏ than sâu dưới lòng đất nơi kỳ thị xảy ra, khoảng sâu vô tận với quái vật thích bóng tối",
+  "theme": "mine",
+  "difficulty": "medium",
+  "min_floors": 7,
+  "max_floors": 12,
+  "min_rooms_per_floor": 3,
+  "max_rooms_per_floor": 7,
+  "atmosphere": "Bóng tối mịn, khí độc từ lỗ thông hơi, tiếng bước chân lành lẫn trên đá, những bướm lửa quỳ lạ",
+  "spawn_creatures": [
+    "thợ_mỏ_ma",
+    "quỷ_ánh_sáng",
+    "linh_hồn_sập_hầm",
+    "thứ_sâu_dưới",
+    "ma_khí_độc",
+    "quái_vật_mù_quáng",
+    "bóng_ma_động",
+    "tâm_linh_đá",
+    "quỷ_lửa_lạnh",
+    "ma_thận_trọng"
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "name": "🔒 Nhà Tù Tối Đen",
+  "description": "Nhà tù từ thế kỷ 18, nơi hành quyết hàng loạt tù nhân bị tra tấn",
+  "theme": "prison",
+  "difficulty": "hard",
+  "min_floors": 4,
+  "max_floors": 6,
+  "min_rooms_per_floor": 8,
+  "max_rooms_per_floor": 15,
+  "atmosphere": "Tiếng kêu la từ những cảnh phòng giam, máu khô trên tường, sắt gỉ kêu gào, những chuỗi xích",
+  "spawn_creatures": [
+    "tù_nhân_ma",
+    "quỷ_giam_hàm",
+    "linh_hồn_hành_quyết",
+    "ma_gông_xiềng",
+    "bóng_ma_tối",
+    "quái_vật_báo_thù",
+    "thứ_hung_bạo",
+    "ma_tối_mờ",
+    "quỷ_xích_dây",
+    "linh_hồn_tàn_phá"
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "name": "🏥 Bệnh Viện Tâm Thần Bỏ Hoang",
+  "description": "Một bệnh viện tâm thần bị bỏ hoang từ năm 1990, nơi diễn ra những thí nghiệm tối đen",
+  "theme": "asylum",
+  "difficulty": "medium",
+  "min_floors": 4,
+  "max_floors": 6,
+  "min_rooms_per_floor": 5,
+  "max_rooms_per_floor": 10,
+  "atmosphere": "Những tiếng thét histerical vang vừng qua hành lang, máu cũ trên tường, các tầng hầm toàn đàn áp",
+  "spawn_creatures": [
+    "bệnh_nhân_ma",
+    "y_tá_điên_loạn",
+    "bác_sĩ_quỷ",
+    "bóng_ma_cách_ly",
+    "quái_vật_sạch_ép",
+    "linh_hồn_bị_giải_phẫu",
+    "ma_khí_tiêm_chích",
+    "tâm_trí_rối_loạn",
+    "quỷ_ác_mộng",
+    "ma_chuỗi_xích"
+  ]
+}

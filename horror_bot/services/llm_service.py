@@ -47,7 +47,7 @@ async def describe_scene(keywords: list[str]) -> str:
 
     # Prompt tối ưu cho Qwen Instruct
     prompt = f"""<|im_start|>system
-Bạn là quản trò game kinh dị. Hãy viết một đoạn văn mô tả ngắn (dưới 50 từ) dựa trên các từ khóa: {', '.join(keywords)}. Giọng văn u ám, đáng sợ.<|im_end|>
+Bạn là quản trò game kinh dí. Hãy viết một đoạn văn mô tả ngắn (dưới 50 từ) dựa trên các từ khóa: {', '.join(keywords)}. Giọng văn u ám, đáng sợ.<|im_end|>
 <|im_start|>user
 Mô tả cảnh này.<|im_end|>
 <|im_start|>assistant
@@ -65,5 +65,39 @@ Mô tả cảnh này.<|im_end|>
             temperature=0.7
         )
         return output['choices'][0]['text'].strip()
+
+    return await loop.run_in_executor(None, run_inference)
+
+async def describe_scene_stream(keywords: list[str], callback=None) -> str:
+    """Generate scene description với streaming callback (gọi callback từng phần)."""
+    if _llm is None:
+        return "Không gian tĩnh mịch... (AI chưa load)"
+
+    prompt = f"""<|im_start|>system
+Bạn là quản trò game kinh dí. Hãy viết một đoạn văn mô tả ngắn (dưới 50 từ) dựa trên các từ khóa: {', '.join(keywords)}. Giọng văn u ám, đáng sợ.<|im_end|>
+<|im_start|>user
+Mô tả cảnh này.<|im_end|>
+<|im_start|>assistant
+"""
+
+    loop = asyncio.get_running_loop()
+    
+    def run_inference():
+        output = _llm(
+            prompt,
+            max_tokens=150,
+            stop=["<|im_end|>", "\n\n"],
+            echo=False,
+            temperature=0.7
+        )
+        result = output['choices'][0]['text'].strip()
+        
+        # Nếu có callback, gọi callback với từng câu
+        if callback:
+            sentences = result.split('. ')
+            for i, sentence in enumerate(sentences):
+                callback(sentence + ('.' if i < len(sentences) - 1 else ''))
+        
+        return result
 
     return await loop.run_in_executor(None, run_inference)

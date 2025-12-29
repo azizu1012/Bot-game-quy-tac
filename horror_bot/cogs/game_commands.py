@@ -4,9 +4,12 @@ from discord.ext import commands
 from database import db_manager
 from database.db_manager import setup_database
 from services import map_generator, game_engine, background_service, scenario_generator
-from cogs.game_ui import GameDashboard, ActionView, PlayerProfileEmbed
+from cogs.game_ui import GameDashboard, ActionView, PlayerProfileEmbed, PlayerDashboardEmbed, ACTION_EMOJIS
+from config import THINKING_PHASE_SECONDS
 import os
 import json
+import asyncio
+import random
 
 class GameCommands(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -19,11 +22,26 @@ class GameCommands(commands.Cog):
     )
     @app_commands.describe(scenario="📍 Chọn kịch bản cho trò chơi")
     @app_commands.choices(scenario=[
-        app_commands.Choice(name="🏨 Khách Sạn Bị Nguyền Rủa", value="hotel"),
-        app_commands.Choice(name="🏥 Tòa Nhà Tâm Thần Bỏ Hoang", value="hospital"),
+        app_commands.Choice(name="� Bệnh Viện Tâm Thần", value="asylum"),
+        app_commands.Choice(name="🏭 Nhà Máy Dệt Bỏ Hoang", value="factory"),
+        app_commands.Choice(name="🌑 Làng Quỷ", value="ghost_village"),
+        app_commands.Choice(name="🏰 Lâu Đài Nguyền Rủa", value="cursed_mansion"),
+        app_commands.Choice(name="⛏️ Mỏ Than Bỏ Hoang", value="mine"),
+        app_commands.Choice(name="🔒 Nhà Tù Tối Đen", value="prison"),
+        app_commands.Choice(name="🕳️ Hốc Sâu Thẳm", value="abyss"),
+        app_commands.Choice(name="🌲 Rừng Chết", value="dead_forest"),
+        app_commands.Choice(name="🔬 Bệnh Viện Thực Tập", value="research_hospital"),
+        app_commands.Choice(name="⛵ Tàu Ma", value="ghost_ship"),
     ])
-    async def new_game(self, interaction: discord.Interaction, scenario: app_commands.Choice[str]):
+    async def new_game(self, interaction: discord.Interaction, scenario: app_commands.Choice[str] = None):
         await interaction.response.defer()  # Defer vì sẽ tạo channel mất thời gian
+        
+        # Random scenario nếu user không chọn hoặc chọn "random"
+        if scenario is None or scenario.value == "random":
+            scenarios = ["asylum", "factory", "ghost_village", "cursed_mansion", "mine", "prison", "abyss", "dead_forest", "research_hospital", "ghost_ship"]
+            scenario_value = random.choice(scenarios)
+        else:
+            scenario_value = scenario.value
         
         game_id = interaction.channel_id
         host_id = interaction.user.id
@@ -37,7 +55,7 @@ class GameCommands(commands.Cog):
         await db_manager.execute_query("DELETE FROM game_maps WHERE game_id = ?", (game_id,), commit=True)
         await db_manager.execute_query("DELETE FROM active_games WHERE channel_id = ?", (game_id,), commit=True)
 
-        scenario_file = f"data/scenarios/{scenario.value}.json"
+        scenario_file = f"data/scenarios/{scenario_value}.json"
         game_map = map_generator.generate_map_structure(scenario_file)
         if not game_map:
             await interaction.followup.send("❌ Lỗi: Không thể tạo bản đồ trò chơi.", ephemeral=True)
@@ -46,7 +64,7 @@ class GameCommands(commands.Cog):
         # Tạo private channel cho trò chơi
         try:
             private_channel = await interaction.guild.create_text_channel(
-                name=f"🕷️-{scenario.value}-game",
+                name=f"🕷️-{scenario_value}-game",
                 category=None,
                 overwrites={
                     interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
@@ -64,7 +82,7 @@ class GameCommands(commands.Cog):
         # Lưu vào database
         await db_manager.execute_query(
             "INSERT INTO active_games (channel_id, private_channel_id, host_id, scenario_type, is_active, current_turn) VALUES (?, ?, ?, ?, 1, 1)",
-            (game_id, private_channel.id, host_id, scenario.value), commit=True
+            (game_id, private_channel.id, host_id, scenario_value), commit=True
         )
         await db_manager.execute_query(
             "INSERT INTO game_maps (game_id, map_data) VALUES (?, ?)",
@@ -74,10 +92,18 @@ class GameCommands(commands.Cog):
         # Thêm host vào game
         await self.add_player_to_game(host_id, game_id, game_map.start_node_id)
         
+        # Load scenario info để lấy name
+        scenario_data = None
+        try:
+            with open(f"data/scenarios/{scenario_value}.json", "r", encoding="utf-8") as f:
+                scenario_data = json.load(f)
+        except:
+            scenario_data = {"name": scenario_value.upper()}
+        
         # Tạo embed thông báo trong kênh chính
         embed = discord.Embed(
             title="🎮 Trò Chơi Kinh Dí Mới Bắt Đầu!",
-            description=f"**Kịch Bản:** {scenario.name}\n**Người Dẫn Dắt:** <@{host_id}>",
+            description=f"**Kịch Bản:** {scenario_data.get('name', scenario_value)}\n**Người Dẫn Dắt:** <@{host_id}>",
             color=discord.Color.dark_red()
         )
         embed.add_field(
@@ -90,10 +116,10 @@ class GameCommands(commands.Cog):
         await interaction.followup.send(embed=embed)
         
         # Gửi thông báo vào private channel
-        await private_channel.send(f"@here\n🎮 **Trò chơi đang bắt đầu!**\nHãy chờ tất cả mọi người join vào...")
+        await private_channel.send(f"@here\n🎮 **Trò chơi đang bắt đầu!**\n📍 **Kịch bản:** {scenario_data.get('name', scenario_value)}\n{scenario_data.get('description', '')}\n\nHãy chờ tất cả mọi người join vào...")
         
         # Generate AI intro cho game
-        intro_description = await scenario_generator.generate_turn_intro(scenario.value, 1, 1)
+        intro_description = await scenario_generator.generate_turn_intro(scenario_value, 1, 1)
         
         turn_manager = game_engine.game_manager.get_manager(game_id, publish_callback=self.publish_turn_results)
         await turn_manager.start_turn()
@@ -191,6 +217,37 @@ class GameCommands(commands.Cog):
         
         await interaction.followup.send(embed=embed)
 
+    @app_commands.command(
+        name="endgame",
+        description="❌ Kết thúc trò chơi hiện tại"
+    )
+    async def end_game(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        
+        game_id = interaction.channel_id
+        
+        game = await db_manager.execute_query("SELECT * FROM active_games WHERE channel_id = ? AND is_active = 1", (game_id,), fetchone=True)
+        if not game:
+            await interaction.followup.send("❌ Không có trò chơi nào đang hoạt động.", ephemeral=True)
+            return
+        
+        # Stop the game manager
+        game_engine.game_manager.end_game(game_id)
+        
+        # Mark game as inactive
+        await db_manager.execute_query("UPDATE active_games SET is_active = 0 WHERE channel_id = ?", (game_id,), commit=True)
+        
+        # Delete private channel
+        if game['private_channel_id']:
+            try:
+                channel = self.bot.get_channel(game['private_channel_id'])
+                if channel:
+                    await channel.delete(reason="Game ended")
+            except discord.Forbidden:
+                pass
+        
+        await interaction.followup.send("✅ Trò chơi đã kết thúc.", ephemeral=True)
+
     async def add_player_to_game(self, user_id, game_id, start_location_id):
         """Helper để thêm người chơi (dùng cho host)."""
         background = {"id": "athlete", "name": "Vận Động Viên", "stats": {"hp": 110, "sanity": 100, "agi": 70, "acc": 50}}
@@ -204,6 +261,7 @@ class GameCommands(commands.Cog):
         )
 
     async def publish_turn_results(self, game_id: int, summary: str, turn_events: list[str]):
+        """Publish turn results and manage thinking phase."""
         game = await db_manager.execute_query("SELECT private_channel_id FROM active_games WHERE channel_id = ?", (game_id,), fetchone=True)
         if not game or not game['private_channel_id']: 
             return
@@ -213,7 +271,21 @@ class GameCommands(commands.Cog):
             return
         
         full_description = f"{summary}\n\n" + "\n".join(f"- {event}" for event in turn_events)
+        
+        # Send results message first
+        embed = discord.Embed(
+            title="📜 KẾT QUẢ LƯỢT",
+            description=full_description,
+            color=discord.Color.gold()
+        )
+        await channel.send(embed=embed)
+        
+        # Update dashboard with thinking phase
         await self.update_dashboard(channel, scene_description=full_description)
+        
+        # Start thinking phase (for discussion)
+        manager = game_engine.game_manager.get_manager(game_id)
+        await manager.start_thinking_phase(duration=THINKING_PHASE_SECONDS)
 
     async def update_player_status_board(self, channel: discord.TextChannel, game_id: int):
         """Cập nhật bảng hiển thị status của tất cả player."""
@@ -245,10 +317,21 @@ class GameCommands(commands.Cog):
                     'name': p['background_name'], 
                     'hp': p['hp'], 
                     'sanity': p['sanity'], 
+                    'agi': p['agi'],
+                    'acc': p['acc'],
+                    'background': p['background_name'],
                     'has_acted': p['has_acted_this_turn']
                 })
 
-        dashboard = GameDashboard(scene_description=scene_description, players_status=player_statuses, turn=game['current_turn'])
+        manager = game_engine.game_manager.get_manager(game_id)
+        phase = getattr(manager, 'phase', 'action')
+        
+        dashboard = GameDashboard(
+            scene_description=scene_description, 
+            players_status=player_statuses, 
+            turn=game['current_turn'],
+            phase=phase
+        )
         view = ActionView(game_id=game_id)
         
         message_id = game['dashboard_message_id']
@@ -264,7 +347,74 @@ class GameCommands(commands.Cog):
             message = await channel.send(embed=dashboard, view=view)
             await db_manager.execute_query("UPDATE active_games SET dashboard_message_id = ? WHERE channel_id = ?", (message.id, game_id), commit=True)
         
+        # Add emoji reactions for actions
+        try:
+            for emoji in ACTION_EMOJIS.values():
+                await message.add_reaction(emoji)
+        except discord.HTTPException:
+            pass  # Reactions might fail in some cases, but game continues
+        
         return message
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
+        """Handle emoji reactions for game actions."""
+        if payload.user_id == self.bot.user.id:
+            return  # Ignore bot's own reactions
+        
+        # Get the game from the message
+        guild = self.bot.get_guild(payload.guild_id)
+        if not guild:
+            return
+        
+        channel = guild.get_channel(payload.channel_id)
+        if not channel:
+            return
+        
+        try:
+            message = await channel.fetch_message(payload.message_id)
+        except discord.NotFound:
+            return
+        
+        # Find game associated with this message
+        game = await db_manager.execute_query(
+            "SELECT * FROM active_games WHERE dashboard_message_id = ? AND is_active = 1",
+            (payload.message_id,), fetchone=True
+        )
+        
+        if not game:
+            return
+        
+        game_id = game['channel_id']
+        user_id = payload.user_id
+        emoji_str = str(payload.emoji)
+        
+        # Map emoji to action
+        action_map = {v: k for k, v in ACTION_EMOJIS.items()}
+        action = action_map.get(emoji_str)
+        
+        if not action:
+            return
+        
+        # Process the action
+        if action == "confirm":
+            result = await game_engine.confirm_player_action(user_id, game_id)
+            if result:
+                user = guild.get_member(user_id)
+                if user:
+                    await message.reply(f"🎉 {user.mention} **xác nhận hành động!**", delete_after=5)
+        elif action == "skip":
+            # Skip action - do nothing
+            user = guild.get_member(user_id)
+            if user:
+                await message.reply(f"⏭️ {user.mention} **bỏ qua lượt này.**", delete_after=5)
+        else:
+            # Register the action
+            await game_engine.register_action(user_id, game_id, action)
+            action_names = {"attack": "Tấn Công", "flee": "Chạy Trốn", "search": "Tìm Kiếm"}
+            user = guild.get_member(user_id)
+            if user:
+                await message.reply(f"✅ {user.mention} chọn **{action_names.get(action, action)}**!", delete_after=5)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(GameCommands(bot))

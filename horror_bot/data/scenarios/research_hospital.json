@@ -1,0 +1,23 @@
+{
+  "name": "🔬 Bệnh Viện Thực Tập",
+  "description": "Một bệnh viện thực tập bí mật nơi làm thí nghiệm trên con người, bỏ hoang sau khi bị lộ",
+  "theme": "research_hospital",
+  "difficulty": "hard",
+  "min_floors": 5,
+  "max_floors": 8,
+  "min_rooms_per_floor": 6,
+  "max_rooms_per_floor": 12,
+  "atmosphere": "Những thi thể trong lọ, bàn mổ máu, máy móc lạ lẫm phát sáng xanh, những tiếng rên từ phòng bí mật",
+  "spawn_creatures": [
+    "bệnh_nhân_biến_dạng",
+    "bác_sĩ_tàn_bạo",
+    "linh_hồn_thí_nghiệm",
+    "quỷ_máu_sốt",
+    "ma_mổ_xẻ",
+    "bóng_ma_hiện_trường",
+    "thứ_nửa_người",
+    "quái_vật_hợp_thành",
+    "ma_mô_đông",
+    "tâm_linh_đau_khổ"
+  ]
+}

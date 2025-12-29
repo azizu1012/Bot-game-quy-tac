@@ -1,8 +1,23 @@
 {
-    "name": "Cursed Hotel",
-    "description": "A once luxurious hotel, now abandoned and rumored to be haunted.",
-    "min_floors": 3,
-    "max_floors": 5,
-    "min_rooms_per_floor": 5,
-    "max_rooms_per_floor": 10
+  "name": "🏨 Khách Sạn Bị Nguyền Rủa",
+  "description": "Một khách sạn xa hoa thời xưa, giờ bỏ hoang và bị bóng ma nàng thơ phanh quỷ rập rình",
+  "theme": "hotel",
+  "difficulty": "medium",
+  "min_floors": 3,
+  "max_floors": 5,
+  "min_rooms_per_floor": 5,
+  "max_rooms_per_floor": 10,
+  "atmosphere": "Những bóng ma trong gương, tiếng nhạc piano buồn từ phòng trống, mùi hương nước hoa cũ",
+  "spawn_creatures": [
+    "cô_gái_ma_thấy_được",
+    "bóng_ma_du_khách",
+    "linh_hồn_phòng_phục_vụ",
+    "quỷ_thang_máy",
+    "ma_khách_sạn_mẩn",
+    "bóng_ma_phòng_tắm",
+    "thứ_dưới_giường",
+    "linh_hồn_giám_đốc",
+    "quỷ_khóa_cửa",
+    "ma_gương_phòng"
+  ]
 }

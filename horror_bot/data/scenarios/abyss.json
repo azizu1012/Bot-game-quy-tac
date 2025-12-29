@@ -1,0 +1,23 @@
+{
+  "name": "🕳️ Hốc Sâu Thẳm",
+  "description": "Một hố sâu dưới lòng đất, nguyên nhân tạo không rõ, toàn là những thứ cổ xưa và quái vật ngoài hành tinh",
+  "theme": "abyss",
+  "difficulty": "hard",
+  "min_floors": 10,
+  "max_floors": 15,
+  "min_rooms_per_floor": 2,
+  "max_rooms_per_floor": 5,
+  "atmosphere": "Không khí nặng nề, tiếng rít nhẹ từ hư không, những ánh sáng dị thường, cảm giác sự sống lạ",
+  "spawn_creatures": [
+    "thứ_cổ_xưa",
+    "quái_vật_ngoài_hành_tinh",
+    "linh_hồn_quốc_ngữ",
+    "ma_khí_trơn",
+    "bóng_ma_vô_hình",
+    "quỷ_thần_bí",
+    "thứ_vô_danh",
+    "ma_dị_thường",
+    "quái_vật_chồng",
+    "linh_hồn_lạ_lùng"
+  ]
+}

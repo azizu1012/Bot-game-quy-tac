@@ -1,0 +1,23 @@
+{
+  "name": "🏭 Nhà Máy Dệt Bỏ Hoang",
+  "description": "Nhà máy dệt từ thế kỷ 19, nơi hàng trăm công nhân tử nạn dưới bánh xe",
+  "theme": "factory",
+  "difficulty": "hard",
+  "min_floors": 5,
+  "max_floors": 7,
+  "min_rooms_per_floor": 6,
+  "max_rooms_per_floor": 12,
+  "atmosphere": "Tiếng bánh xe xoay vẫn kêu hạ, khí gas độc từ lò luyện thoát ra, những bóng đen lơ lửng",
+  "spawn_creatures": [
+    "thợ_công_nhân_ma",
+    "quỷ_máy_xoay",
+    "linh_hồn_bị_nặn",
+    "ma_khí_độc",
+    "quái_vật_bánh_xe",
+    "bóng_ma_khóa",
+    "tâm_linh_nạn_nhân",
+    "quỷ_dây_chuyền",
+    "ma_dầu_máy",
+    "thứ_quái_vật_luyện"
+  ]
+}
