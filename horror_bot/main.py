@@ -1,21 +1,23 @@
 import discord
 import os
+import asyncio
 from discord.ext import commands
 from dotenv import load_dotenv
 from services.llm_service import load_llm
 from database.db_manager import setup_database
 
-# Load biến môi trường
+# Load environment variables
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
-# Setup Bot
+# Bot Setup
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
+    """Event that runs when the bot is connected and ready."""
     print(f'✅ Đã đăng nhập dưới tên: {bot.user} (ID: {bot.user.id})')
     print('=' * 50)
     
@@ -34,35 +36,34 @@ async def on_ready():
     else:
         print("⚠️  LLM không thể tải. Mô tả sẽ bị hạn chế.\n")
     
-    # 3. Load Cogs
-    try:
-        await bot.load_extension("cogs.game_commands")
-        await bot.load_extension("cogs.admin_commands")
-        await bot.load_extension("cogs.game_ui")
-        print("✅ Các plugin đã tải thành công.")
-    except Exception as e:
-        print(f"❌ Lỗi tải plugin: {e}")
+    print("\n" + "=" * 50)
+    print("🚀 Bot sẵn sàng! Sử dụng /newgame, /join, /endgame")
+    print("==================================================")
 
-    # 4. AUTO-SYNC SLASH COMMANDS
-    print("\n🔄 Đồng bộ hóa slash commands...")
-    try:
-        # Xóa toàn bộ slash commands cũ để force refresh
-        await bot.tree.clear_commands(sync_to_guild=None)
-        await bot.tree.sync()
-        
-        # Đồng bộ hóa lại slash commands mới
-        synced = await bot.tree.sync()
-        print(f"✅ Đã đồng bộ {len(synced)} slash commands!")
-        for cmd in synced:
-            print(f"   - /{cmd.name}")
-        print("\n" + "=" * 50)
-        print("🚀 Bot sẵn sàng! Sử dụng /newgame, /join, /endgame")
-        print("=" * 50)
-    except Exception as e:
-        print(f"❌ Lỗi đồng bộ hóa: {e}")
+async def main():
+    """Main function to load cogs and run the bot."""
+    if not DISCORD_TOKEN:
+        print("❌ Error: DISCORD_TOKEN not found in .env file.")
+        return
+
+    # Load Cogs before starting the bot
+    print("🔌 Đang tải các plugin (cogs)...")
+    async with bot:
+        try:
+            await bot.load_extension("cogs.game_commands")
+            await bot.load_extension("cogs.admin_commands")
+            await bot.load_extension("cogs.game_ui")
+            print("✅ Các plugin đã tải thành công.")
+        except Exception as e:
+            print(f"❌ Lỗi tải plugin: {e}")
+            return  # Exit if cogs fail to load
+
+        await bot.start(DISCORD_TOKEN)
 
 if __name__ == "__main__":
-    if not DISCORD_TOKEN:
-        print("Error: DISCORD_TOKEN not found in .env file.")
-    else:
-        bot.run(DISCORD_TOKEN)
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nℹ️ Bot đã tắt.")
+    except Exception as e:
+        print(f"❌ Lỗi không xác định khi chạy bot: {e}")

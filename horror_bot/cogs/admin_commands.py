@@ -3,6 +3,7 @@ from discord import app_commands
 from discord.ext import commands
 from database import db_manager
 from services import game_engine
+import typing # Import typing for optional guild
 
 class AdminCommands(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -10,37 +11,31 @@ class AdminCommands(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        print("Admin Commands Cog is ready.")
+        print("✅ Admin Commands Cog sẵn sàng.")
 
-    @app_commands.command(name="endgame", description="🛑 [Quản Trị] Kết thúc trò chơi đang hoạt động và xóa dữ liệu.")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def end_game(self, interaction: discord.Interaction):
-        """Kết thúc một trò chơi và xóa dữ liệu."""
-        game_id = interaction.channel_id
-        
-        active_game = await db_manager.execute_query("SELECT * FROM active_games WHERE channel_id = ? AND is_active = 1", (game_id,), fetchone=True)
-        if not active_game:
-            await interaction.response.send_message("⚠️ Không có trò chơi đang hoạt động để kết thúc trong kênh này.", ephemeral=True)
-            return
+    @commands.hybrid_command(
+        name="sync", 
+        description="[Quản Trị] Đồng bộ hóa các lệnh (slash commands) của bot."
+    )
+    @commands.guild_only()
+    @commands.is_owner()
+    async def sync(self, ctx: commands.Context, guild: typing.Optional[discord.Guild]):
+        """
+        Đồng bộ hóa các slash command với Discord.
+        Chỉ chủ sở hữu bot mới có thể dùng lệnh này.
+        """
+        if guild:
+            self.bot.tree.copy_global_to(guild=guild)
+            synced = await self.bot.tree.sync(guild=guild)
+            msg = f"✅ Đã đồng bộ {len(synced)} lệnh cho máy chủ: {guild.name}"
+        else:
+            synced = await self.bot.tree.sync()
+            msg = f"✅ Đã đồng bộ {len(synced)} lệnh trên toàn cục."
 
-        # Clean up the game manager instance to stop any running tasks
-        game_engine.game_manager.end_game(game_id)
-
-        # Delete private channel if exists
-        if active_game['private_channel_id']:
-            try:
-                private_channel = self.bot.get_channel(active_game['private_channel_id'])
-                if private_channel:
-                    await private_channel.delete(reason="Game ended")
-            except discord.Forbidden:
-                pass  # Bot không có quyền xóa
-
-        # Delete all related data
-        await db_manager.execute_query("DELETE FROM players WHERE game_id = ?", (game_id,), commit=True)
-        await db_manager.execute_query("DELETE FROM game_maps WHERE game_id = ?", (game_id,), commit=True)
-        await db_manager.execute_query("DELETE FROM active_games WHERE channel_id = ?", (game_id,), commit=True)
-
-        await interaction.response.send_message("✅ Trò chơi đã kết thúc! Kênh riêng đã bị xóa và dữ liệu đã bị xóa.", ephemeral=False)
+        await ctx.send(msg, ephemeral=True)
+        print(msg)
+        for cmd in synced:
+            print(f"   - /{cmd.name}")
 
     @app_commands.command(name="showdb", description="🔍 [Quản Trị] Hiển thị dữ liệu từ bảng cơ sở dữ liệu.")
     @app_commands.checks.has_permissions(administrator=True)
@@ -78,13 +73,12 @@ class AdminCommands(commands.Cog):
 
         await interaction.response.send_message(response_content, ephemeral=True)
         
-    @end_game.error
     @show_db.error
     async def on_admin_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         if isinstance(error, app_commands.errors.CheckFailure):
-            await interaction.response.send_message("You do not have the required permissions for this command.", ephemeral=True)
+            await interaction.response.send_message("❌ Bạn không có quyền sử dụng lệnh này.", ephemeral=True)
         else:
-            await interaction.response.send_message(f"An unexpected error occurred: {error}", ephemeral=True)
+            await interaction.response.send_message(f"❌ Lỗi: {error}", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

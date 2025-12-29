@@ -20,28 +20,16 @@ class GameCommands(commands.Cog):
         name="newgame", 
         description="🎮 Bắt đầu một trò chơi kinh dí mới với tất cả thành viên muốn tham gia"
     )
-    @app_commands.describe(scenario="📍 Chọn kịch bản cho trò chơi")
-    @app_commands.choices(scenario=[
-        app_commands.Choice(name="� Bệnh Viện Tâm Thần", value="asylum"),
-        app_commands.Choice(name="🏭 Nhà Máy Dệt Bỏ Hoang", value="factory"),
-        app_commands.Choice(name="🌑 Làng Quỷ", value="ghost_village"),
-        app_commands.Choice(name="🏰 Lâu Đài Nguyền Rủa", value="cursed_mansion"),
-        app_commands.Choice(name="⛏️ Mỏ Than Bỏ Hoang", value="mine"),
-        app_commands.Choice(name="🔒 Nhà Tù Tối Đen", value="prison"),
-        app_commands.Choice(name="🕳️ Hốc Sâu Thẳm", value="abyss"),
-        app_commands.Choice(name="🌲 Rừng Chết", value="dead_forest"),
-        app_commands.Choice(name="🔬 Bệnh Viện Thực Tập", value="research_hospital"),
-        app_commands.Choice(name="⛵ Tàu Ma", value="ghost_ship"),
-    ])
-    async def new_game(self, interaction: discord.Interaction, scenario: app_commands.Choice[str] = None):
+    @app_commands.describe(scenario="📍 Chọn kịch bản cho trò chơi (để trống để random)")
+    async def new_game(self, interaction: discord.Interaction, scenario: str = None):
         await interaction.response.defer()  # Defer vì sẽ tạo channel mất thời gian
         
-        # Random scenario nếu user không chọn hoặc chọn "random"
-        if scenario is None or scenario.value == "random":
+        # Random scenario nếu user không chọn
+        if scenario is None:
             scenarios = ["asylum", "factory", "ghost_village", "cursed_mansion", "mine", "prison", "abyss", "dead_forest", "research_hospital", "ghost_ship"]
             scenario_value = random.choice(scenarios)
         else:
-            scenario_value = scenario.value
+            scenario_value = scenario
         
         game_id = interaction.channel_id
         host_id = interaction.user.id
