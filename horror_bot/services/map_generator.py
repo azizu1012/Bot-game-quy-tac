@@ -1,6 +1,7 @@
 import json
 import random
 import uuid
+import os
 
 class MapNode:
     """Represents a single location (room) on the map."""
@@ -31,8 +32,21 @@ class MapStructure:
     def connect_nodes(self, from_node_id: str, to_node_id: str, direction: str):
         """Creates a two-way connection between nodes."""
         if from_node_id in self.nodes and to_node_id in self.nodes:
-            # Simple connection for now, can be expanded (e.g., one-way doors)
-            opposite_direction = {"north": "south", "south": "north", "east": "west", "west": "east"}[direction]
+            # FIX 1: Thêm cặp hướng up/down vào đây để không bị KeyError
+            opposites = {
+                "north": "south", 
+                "south": "north", 
+                "east": "west", 
+                "west": "east",
+                "up": "down",       # <-- Đã thêm
+                "down": "up"        # <-- Đã thêm
+            }
+            
+            if direction not in opposites:
+                print(f"Warning: Unknown direction '{direction}'")
+                return
+
+            opposite_direction = opposites[direction]
             self.nodes[from_node_id].connections[direction] = to_node_id
             self.nodes[to_node_id].connections[opposite_direction] = from_node_id
 
@@ -41,8 +55,14 @@ def generate_map_structure(scenario_path: str) -> MapStructure:
     Generates a random map structure based on a scenario JSON file,
     creating a grid-like layout for each floor.
     """
+    # Xử lý đường dẫn file an toàn hơn
+    if not os.path.exists(scenario_path):
+        # Thử tìm trong thư mục gốc nếu đường dẫn tương đối bị sai
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        scenario_path = os.path.join(base_dir, scenario_path)
+
     try:
-        with open(scenario_path, 'r') as f:
+        with open(scenario_path, 'r', encoding='utf-8') as f:
             config = json.load(f)
     except FileNotFoundError:
         print(f"Error: Scenario file not found at {scenario_path}")
@@ -87,20 +107,28 @@ def generate_map_structure(scenario_path: str) -> MapStructure:
         if not floor_nodes:
              continue # Skip empty floors
 
-        # Connect this floor to the previous one
+        # Connect this floor to the previous one (UP STAIRS)
         if previous_floor_stair_down:
             stair_up_node = random.choice(floor_nodes)
+            # Nối từ tầng trên (previous) đi xuống (down) tầng này (stair_up_node)
             map_structure.connect_nodes(previous_floor_stair_down.id, stair_up_node.id, "down")
-            stair_up_node.room_type = "stairwell_down" # This room now leads down
+            
+            # FIX 2: Phòng này dẫn lên tầng trên, nên gọi là stairwell_up
+            stair_up_node.room_type = "stairwell_up" 
+            stair_up_node.description += " (Stairs going UP)"
 
-        # Create a stairwell leading to the *next* floor
+        # Create a stairwell leading to the *next* floor (DOWN STAIRS)
         if floor_num < num_floors - 1:
             stair_down_node = random.choice(floor_nodes)
             # Ensure the chosen stairwell node is not the same as the entry stairwell, if possible
             if len(floor_nodes) > 1 and 'stair_up_node' in locals() and stair_down_node == stair_up_node:
                 stair_down_node = random.choice([n for n in floor_nodes if n != stair_up_node])
             
-            stair_down_node.room_type = "stairwell_up" # This room leads up
+            # FIX 3: Phòng này dẫn xuống tầng dưới, nên gọi là stairwell_down
+            stair_down_node.room_type = "stairwell_down"
+            stair_down_node.description += " (Stairs going DOWN)"
+            
+            # Lưu lại node này để vòng lặp sau nối vào
             previous_floor_stair_down = stair_down_node
             
     # Add some entities/events (example)
@@ -111,20 +139,3 @@ def generate_map_structure(scenario_path: str) -> MapStructure:
             node.events.append("locked_chest")
             
     return map_structure
-
-if __name__ == '__main__':
-    # Example usage:
-    # Ensure you run this from the root of the horror_bot project
-    # or adjust the path accordingly.
-    import os
-    # Fix path for direct execution
-    if os.getcwd().endswith('services'):
-        os.chdir('..')
-        
-    hotel_map = generate_map_structure("data/scenarios/hotel.json")
-    if hotel_map:
-        print(f"Generated map for '{hotel_map.scenario_name}' with {len(hotel_map.nodes)} rooms.")
-        print(f"Starting node: {hotel_map.start_node_id}")
-        # You can inspect the first node's connections
-        start_node = hotel_map.nodes[hotel_map.start_node_id]
-        print(f"Start node connections: {start_node.connections}")
