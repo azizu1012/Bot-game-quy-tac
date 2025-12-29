@@ -12,10 +12,14 @@ class GameCommands(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @commands.Cog.listener()
-    async def on_ready(self):
-        print("Game Commands Cog is ready.")
-        await setup_database()
+# Sửa thành cog_load (không cần @listener)
+    async def cog_load(self):
+        print("📥 Game Commands Cog loaded. Đang khởi tạo Database...")
+        try:
+            await setup_database()
+            print("✅ Database tables created successfully!")
+        except Exception as e:
+            print(f"❌ Database Init Error: {e}")
 
     @app_commands.command(name="newgame", description="Starts a new horror RPG game in this channel.")
     @app_commands.describe(scenario="Choose the scenario for the game.")
