@@ -56,13 +56,14 @@ if [ ! -f .env ]; then
     cat <<EOT >> .env
 # Discord Config
 DISCORD_TOKEN=HAY_DIEN_TOKEN_CUA_BAN_VAO_DAY
+ADMIN_ID=YOUR_DISCORD_USER_ID_HERE
 
 # LLM Config
 LLM_MODEL_PATH=./models/qwen2.5-1.5b-instruct-q4_k_m.gguf
-LLM_N_THREADS=2
-LLM_CONTEXT_SIZE=4096
+LLM_N_THREADS=4
+LLM_CONTEXT_SIZE=8192
 EOT
-    echo -e "${GREEN}⚠️  Đã tạo file .env mới. HÃY ĐIỀN TOKEN VÀO!${NC}"
+    echo -e "${GREEN}⚠️  Đã tạo file .env mới. HÃY ĐIỀN TOKEN VÀ ADMIN_ID VÀO!${NC}"
 else
     echo "File .env đã tồn tại."
 fi
