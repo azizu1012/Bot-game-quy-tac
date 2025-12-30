@@ -37,6 +37,42 @@ class AdminCommands(commands.Cog):
         for cmd in synced:
             print(f"   - /{cmd.name}")
 
+    @app_commands.command(name="setup", description="🔧 [Admin] Setup game room cho server này")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(category="📁 Category để tạo game rooms")
+    async def setup_game(self, interaction: discord.Interaction, category: discord.CategoryChannel):
+        """Setup config để bot có thể tạo game rooms."""
+        await interaction.response.defer()
+        
+        guild_id = interaction.guild.id
+        admin_id = interaction.user.id
+        category_id = category.id
+        
+        print(f"\n🔧 [SETUP] Admin {admin_id} setting up game for guild {guild_id}")
+        print(f"   └─ Category: {category.name} (ID: {category_id})")
+        
+        # Check if already setup
+        existing_setup = await db_manager.get_game_setup(guild_id)
+        if existing_setup:
+            print(f"   ⚠️ Setup đã tồn tại, cập nhật...")
+            await db_manager.execute_query(
+                "UPDATE game_setups SET category_id = ?, created_by = ? WHERE guild_id = ?",
+                (category_id, admin_id, guild_id),
+                commit=True
+            )
+        else:
+            print(f"   └─ Creating new setup...")
+            await db_manager.execute_query(
+                "INSERT INTO game_setups (guild_id, category_id, created_by) VALUES (?, ?, ?)",
+                (guild_id, category_id, admin_id),
+                commit=True
+            )
+        
+        print(f"✅ [SETUP] Complete!\n")
+        await interaction.followup.send(
+            f"✅ Setup xong! Bot sẽ tạo game rooms trong category: {category.mention}"
+        )
+
     @app_commands.command(name="showdb", description="🔍 [Quản Trị] Hiển thị dữ liệu từ bảng cơ sở dữ liệu.")
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(table="Bảng dữ liệu cần xem")

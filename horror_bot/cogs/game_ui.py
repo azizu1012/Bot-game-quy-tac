@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 from services import game_engine
 from database import db_manager
+import asyncio
 
 # --- Emoji Reactions for Actions ---
 ACTION_EMOJIS = {
@@ -12,78 +13,73 @@ ACTION_EMOJIS = {
     "skip": "⏭️"         # Bỏ qua
 }
 
-class ActionReactionView(discord.ui.View):
-    """Simple emoji reaction handler for game actions."""
-    def __init__(self, game_id: int, message_id: int = None):
-        super().__init__(timeout=None)
-        self.game_id = game_id
-        self.message_id = message_id
+# --- PLAIN TEXT UI FUNCTIONS ---
 
-    # Use raw_reaction_add event listener in main cog instead
+async def send_action_menu(channel: discord.TextChannel, game_id: int) -> discord.Message:
+    """Send action menu using plain text + emoji reactions."""
+    text = """**━━━━━━━━━━━━━━━━━━━**
+**⚔️ CHỌN HÀNH ĐỘNG:**
 
+Phản ứng bằng emoji để chọn:
+⚔️  Tấn Công
+🏃  Chạy Trốn
+🔍  Tìm Kiếm
+✅  Xác Nhận Hành Động
+⏭️  Bỏ Qua
 
-class ActionView(discord.ui.View):
-    """Legacy button view - kept for compatibility during transition."""
-    def __init__(self, game_id: int):
-        super().__init__(timeout=None)
-        self.game_id = game_id
+**━━━━━━━━━━━━━━━━━━━**"""
 
-    @discord.ui.button(label="⚔️ Tấn Công", style=discord.ButtonStyle.danger, custom_id="attack_button")
-    async def attack(self, interaction: discord.Interaction, button: discord.ui.Button):
-        try:
-            await interaction.response.defer(ephemeral=True)
-            await game_engine.register_action(interaction.user.id, self.game_id, "attack")
-            await interaction.followup.send("✅ Bạn chọn **Tấn Công**! Nhấn nút **XÁC NHẬN** để confirm hành động.", ephemeral=True)
-        except discord.errors.NotFound:
-            print(f"⚠️ Interaction expired cho user {interaction.user.id}")
-        except Exception as e:
-            print(f"❌ Lỗi attack button: {e}")
-
-    @discord.ui.button(label="🏃 Chạy Trốn", style=discord.ButtonStyle.secondary, custom_id="flee_button")
-    async def flee(self, interaction: discord.Interaction, button: discord.ui.Button):
-        try:
-            await interaction.response.defer(ephemeral=True)
-            await game_engine.register_action(interaction.user.id, self.game_id, "flee")
-            await interaction.followup.send("✅ Bạn chọn **Chạy Trốn**! Nhấn nút **XÁC NHẬN** để confirm hành động.", ephemeral=True)
-        except discord.errors.NotFound:
-            print(f"⚠️ Interaction expired cho user {interaction.user.id}")
-        except Exception as e:
-            print(f"❌ Lỗi flee button: {e}")
-
-    @discord.ui.button(label="🔍 Tìm Kiếm", style=discord.ButtonStyle.primary, custom_id="search_button")
-    async def search(self, interaction: discord.Interaction, button: discord.ui.Button):
-        try:
-            await interaction.response.defer(ephemeral=True)
-            await game_engine.register_action(interaction.user.id, self.game_id, "search")
-            await interaction.followup.send("✅ Bạn chọn **Tìm Kiếm**! Nhấn nút **XÁC NHẬN** để confirm hành động.", ephemeral=True)
-        except discord.errors.NotFound:
-            print(f"⚠️ Interaction expired cho user {interaction.user.id}")
-        except Exception as e:
-            print(f"❌ Lỗi search button: {e}")
+    msg = await channel.send(text)
     
-    @discord.ui.button(label="✅ XÁC NHẬN", style=discord.ButtonStyle.success, custom_id="confirm_button")
-    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+    # Add emoji reactions
+    for emoji in ACTION_EMOJIS.values():
         try:
-            await interaction.response.defer(ephemeral=True)
-            success = await game_engine.confirm_player_action(interaction.user.id, self.game_id)
-            if success:
-                await interaction.followup.send("🎉 Hành động của bạn đã được xác nhận! Đợi người chơi khác...", ephemeral=True)
-            else:
-                await interaction.followup.send("⚠️ Bạn chưa chọn hành động nào để xác nhận!", ephemeral=True)
-        except discord.errors.NotFound:
-            print(f"⚠️ Interaction expired cho user {interaction.user.id}")
-        except Exception as e:
-            print(f"❌ Lỗi confirm button: {e}")
+            await msg.add_reaction(emoji)
+        except:
+            pass
+    
+    return msg
 
 
-# --- UI Embeds (Display) ---
+async def send_game_status_plain_text(channel: discord.TextChannel, players: list, turn: int, remaining_time: int = None) -> str:
+    """Send game status as plain text (not embed)."""
+    status_text = f"""**━━━━━━━━━━━━━━━━━━━**
+**LƯỢT {turn}**
+
+**👥 TRẠNG THÁI NGƯỜI CHƠI:**"""
+
+    for player in players:
+        hp_bar = create_progress_bar(player['hp'], 120)
+        sanity_bar = create_progress_bar(player['sanity'], 120)
+        status = "🟢 Sống" if player['hp'] > 0 else "❌ Chết"
+        
+        status_text += f"""
+{status} **{player['name']}** ({player['background']})
+❤️  {hp_bar}
+🧠 {sanity_bar}
+⚡ AGI: {player['agi']}/100 | 🎯 ACC: {player['acc']}/100
+"""
+
+    if remaining_time:
+        mins = remaining_time // 60
+        secs = remaining_time % 60
+        status_text += f"\n**⏱️ Thời gian còn lại: {mins}:{secs:02d}**"
+
+    status_text += "\n**━━━━━━━━━━━━━━━━━━━**"
+    
+    return status_text
+
 
 def create_progress_bar(value: int, max_value: int, length: int = 10) -> str:
     """Creates a simple text-based progress bar."""
-    ratio = max(0, min(1, value / max_value))
+    if max_value == 0:
+        ratio = 0
+    else:
+        ratio = max(0, min(1, value / max_value))
     filled_length = int(length * ratio)
     bar = '█' * filled_length + '░' * (length - filled_length)
     return f"[{bar}] {value}/{max_value}"
+
 
 class PlayerProfileEmbed(discord.Embed):
     """Embed hiển thị profile của một người chơi khi họ join (chỉ user thấy được)."""
@@ -97,6 +93,7 @@ class PlayerProfileEmbed(discord.Embed):
         
         hp_bar = create_progress_bar(hp, 120)
         sanity_bar = create_progress_bar(sanity, 120)
+        
         
         self.add_field(name="❤️ HP", value=hp_bar, inline=False)
         self.add_field(name="🧠 Sanity", value=sanity_bar, inline=False)
