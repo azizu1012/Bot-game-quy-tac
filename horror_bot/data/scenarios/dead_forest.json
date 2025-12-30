@@ -8,6 +8,11 @@
   "min_rooms_per_floor": 10,
   "max_rooms_per_floor": 20,
   "atmosphere": "Những cây cổ ngàn năm héo khô, tiếng gầm của những thú dữ, mùi thối rếu, ánh trăng xanh ma",
+  "objectives": [
+    "Tìm linh vật cổ xưa giấu trong rừng",
+    "Sống sót qua đêm trong sâu rừng",
+    "Tìm được lối ra khỏi rừng tối"
+  ],
   "spawn_creatures": [
     "quỷ_cây_cổ",
     "thú_dữ_biến_dạng",

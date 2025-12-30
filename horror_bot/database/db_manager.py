@@ -1,5 +1,6 @@
 import aiosqlite
 import os
+import asyncio
 
 # --- CẤU HÌNH ĐƯỜNG DẪN TUYỆT ĐỐI (QUAN TRỌNG) ---
 # Lấy đường dẫn thư mục chứa file db_manager.py (tức là thư mục database/)
@@ -42,22 +43,32 @@ async def setup_database():
             except Exception as e:
                 print(f"❌ Lỗi SQL khi tạo bảng: {e}")
 
-async def execute_query(query, params=(), commit=False, fetchone=False, fetchall=False):
+async def execute_query(query, params=(), commit=False, fetchone=False, fetchall=False, timeout=30):
     """Hàm tiện ích để chạy query SQL an toàn (trả về dict, không phải Row)"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(query, params) as cursor:
-            result = None
-            if fetchone:
-                row = await cursor.fetchone()
-                result = dict(row) if row else None
-            elif fetchall:
-                rows = await cursor.fetchall()
-                result = [dict(row) for row in rows] if rows else []
-            
-            if commit:
-                await db.commit()
-            return result
+    async def _execute():
+        async with aiosqlite.connect(DB_PATH, timeout=30) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(query, params) as cursor:
+                result = None
+                if fetchone:
+                    row = await cursor.fetchone()
+                    result = dict(row) if row else None
+                elif fetchall:
+                    rows = await cursor.fetchall()
+                    result = [dict(row) for row in rows] if rows else []
+                
+                if commit:
+                    await db.commit()
+                return result
+    
+    try:
+        return await asyncio.wait_for(_execute(), timeout=timeout)
+    except asyncio.TimeoutError:
+        print(f"❌ Database timeout ({timeout}s): {query[:100]}...")
+        raise
+    except Exception as e:
+        print(f"❌ Database error: {e}")
+        raise
 
 # ===== HELPER FUNCTIONS FOR GAME MANAGEMENT =====
 
@@ -363,3 +374,33 @@ async def record_encounter(game_id: str, location_id: str, player_ids: list, enc
         (game_id, location_id, json.dumps(player_ids), encounter_text),
         commit=True
     )
+
+async def save_game_rules(game_id: int, rules_dict: dict):
+    """Saves public and hidden rules into the database."""
+    if not rules_dict:
+        return
+
+    public_rules = rules_dict.get("public_rules", [])
+    hidden_rules = rules_dict.get("hidden_rules", [])
+
+    all_rules = []
+    for rule in public_rules:
+        all_rules.append((game_id, rule.get("rule", "N/A"), 1)) # 1 for public
+
+    for rule in hidden_rules:
+        all_rules.append((game_id, rule.get("rule", "N/A"), 0)) # 0 for hidden
+
+    if not all_rules:
+        return
+
+    # Use executemany for efficient bulk insertion
+    async with aiosqlite.connect(DB_PATH) as db:
+        try:
+            await db.executemany(
+                "INSERT INTO game_rules (game_id, rule_text, is_public) VALUES (?, ?, ?)",
+                all_rules
+            )
+            await db.commit()
+            print(f"✅ Saved {len(all_rules)} rules to the database for game {game_id}.")
+        except Exception as e:
+            print(f"❌ Error saving game rules: {e}")

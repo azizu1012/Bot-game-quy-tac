@@ -1,0 +1,6 @@
+<|im_start|>system
+{system_prompt}<|im_end|>
+{messages_text}
+<|im_start|>user
+{action_text}<|im_end|>
+<|im_start|>assistant

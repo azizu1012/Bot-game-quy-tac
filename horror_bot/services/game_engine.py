@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 HORROR BOT - GAME ENGINE (Free-Form Action Processing)
 Per-user action pipeline with automatic encounter detection and real-time dashboard updates
@@ -7,7 +8,7 @@ import asyncio
 import json
 import discord
 from database import db_manager
-from services import llm_service
+from services import llm_service, leaderboard_service
 
 
 def create_progress_bar(current: int, max_val: int, width: int = 10) -> str:
@@ -85,23 +86,46 @@ Be concise. Horror tone. Vietnamese.
         )
         
         # ======================================================================
-        # STEP 3: PARSE & UPDATE DB ATOMICALLY
+        # STEP 3: PARSE LLM RESPONSE
         # ======================================================================
         try:
             action_result = json.loads(llm_response)
         except json.JSONDecodeError:
             action_result = {
                 "success": False,
-                "description": "Hệ thống AI gặp lỗi.",
+                "description": "Hệ thống AI gặp lỗi phân tích.",
                 "hp_change": 0,
                 "sanity_change": 0,
                 "new_location_id": "same",
                 "discovered_items": []
             }
         
-        # Update player stats (atomic with clamping)
-        new_hp = max(0, min(100, player['hp'] + action_result.get('hp_change', 0)))
-        new_sanity = max(0, min(100, player['sanity'] + action_result.get('sanity_change', 0)))
+        # ======================================================================
+        # STEP 3.5: CHECK FOR HIDDEN RULE VIOLATIONS
+        # ======================================================================
+        violation_penalty = 0
+        violation_reason = None
+        hidden_rules = await db_manager.get_game_rules(game_id, is_public=False)
+        if hidden_rules:
+            violation_check = await llm_service.check_rule_violation(
+                hidden_rules=hidden_rules,
+                action_text=action_text,
+                action_description=action_result.get('description', '')
+            )
+            if violation_check.get('violated'):
+                print(f"🚨 Player {player_id} violated rule: {violation_check.get('rule_violated')}")
+                violation_penalty = -15  # Penalty for breaking a hidden rule
+                violation_reason = violation_check.get('reason', 'Bạn cảm thấy một sự ớn lạnh chạy dọc sống lưng...')
+
+        # ======================================================================
+        # STEP 4: UPDATE DB ATOMICALLY
+        # ======================================================================
+        # Combine penalties from action and violation
+        total_hp_change = action_result.get('hp_change', 0)
+        total_sanity_change = action_result.get('sanity_change', 0) + violation_penalty
+        
+        new_hp = max(0, min(100, player['hp'] + total_hp_change))
+        new_sanity = max(0, min(100, player['sanity'] + total_sanity_change))
         
         await db_manager.execute_query(
             """UPDATE players SET hp = ?, sanity = ?, last_action_result = ?
@@ -121,17 +145,17 @@ Be concise. Horror tone. Vietnamese.
             user_id=player_id,
             game_id=game_id,
             role="user",
-            message=action_text
+            content=action_text
         )
         await db_manager.append_to_llm_history(
             user_id=player_id,
             game_id=game_id,
             role="assistant",
-            message=action_result['description']
+            content=action_result['description']
         )
         
         # ======================================================================
-        # STEP 4: CHECK FOR ENCOUNTERS
+        # STEP 5: HANDLE LOCATION CHANGES AND ENCOUNTERS
         # ======================================================================
         new_location_id = action_result.get('new_location_id', 'same')
         if new_location_id != 'same':
@@ -150,14 +174,16 @@ Be concise. Horror tone. Vietnamese.
         encounter_text = None
         if other_players:
             other_player_names = [p['background_name'] for p in other_players]
+            scenario_type = (await db_manager.execute_query(
+                "SELECT scenario_type FROM active_games WHERE channel_id = ?",
+                (game_id,), fetchone=True
+            ))['scenario_type']
+
             encounter_text = await llm_service.generate_encounter(
                 action_description=action_text,
                 player_name=player['background_name'],
                 other_players=other_player_names,
-                scenario_type=(await db_manager.execute_query(
-                    "SELECT scenario_type FROM active_games WHERE game_id = ?",
-                    (game_id,), fetchone=True
-                ))['scenario_type']
+                scenario_type=scenario_type
             )
             
             # Record encounter
@@ -169,12 +195,12 @@ Be concise. Horror tone. Vietnamese.
             )
         
         # ======================================================================
-        # STEP 5: UPDATE REAL-TIME DASHBOARD
+        # STEP 6: UPDATE REAL-TIME DASHBOARD
         # ======================================================================
         await update_game_dashboard(game_id, bot)
         
         # ======================================================================
-        # STEP 6: SEND RESPONSE TO PLAYER'S PRIVATE CHANNEL
+        # STEP 7: SEND RESPONSE TO PLAYER'S PRIVATE CHANNEL
         # ======================================================================
         private_channel_id = player['private_channel_id']
         if private_channel_id:
@@ -182,23 +208,27 @@ Be concise. Horror tone. Vietnamese.
             if private_channel:
                 # Build response embed
                 embed = discord.Embed(
-                    title="⚔️ Action Result",
+                    title="⚔️ Kết quả hành động",
                     description=action_result['description'],
                     color=discord.Color.dark_red()
                 )
                 
-                hp_change = action_result.get('hp_change', 0)
-                sanity_change = action_result.get('sanity_change', 0)
-                
                 embed.add_field(
-                    name="📊 Stats",
-                    value=f"HP: **{new_hp}** ({hp_change:+d})\nSanity: **{new_sanity}** ({sanity_change:+d})",
+                    name="📊 Chỉ số",
+                    value=f"HP: **{new_hp}** ({total_hp_change:+d})\nSanity: **{new_sanity}** ({total_sanity_change:+d})",
                     inline=False
                 )
+
+                if violation_reason:
+                    embed.add_field(
+                        name="⚠️ Cảm giác bất an",
+                        value=f"*{violation_reason}*",
+                        inline=False
+                    )
                 
                 if action_result.get('discovered_items'):
                     embed.add_field(
-                        name="📦 Items Found",
+                        name="📦 Nhặt được",
                         value=", ".join(action_result['discovered_items']),
                         inline=False
                     )
@@ -208,14 +238,45 @@ Be concise. Horror tone. Vietnamese.
                 # Send encounter message if applicable
                 if encounter_text:
                     encounter_embed = discord.Embed(
-                        title="👥 Encounter!",
+                        title="👥 Gặp gỡ!",
                         description=encounter_text,
                         color=discord.Color.gold()
                     )
                     await private_channel.send(embed=encounter_embed)
     
     except Exception as e:
-        print(f"❌ Error processing action: {e}")
+        print(f"❌ Error processing action: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    # ======================================================================
+    # STEP 8: CHECK FOR GAME COMPLETION (Auto-create leaderboard)
+    # ======================================================================
+    try:
+        game_guild = None
+        game_info = await db_manager.execute_query(
+            "SELECT * FROM active_games WHERE channel_id = ?",
+            (game_id,),
+            fetchone=True
+        )
+        
+        if game_info:
+            # Get guild from lobby channel
+            try:
+                lobby_ch = bot.get_channel(int(game_info['lobby_channel_id']))
+                if lobby_ch:
+                    game_guild = lobby_ch.guild
+            except:
+                pass
+        
+        if game_guild:
+            completion = await leaderboard_service.check_game_completion(
+                game_id, bot, game_guild
+            )
+            if completion:
+                print(f"[AUTO] Leaderboard created for game {game_id}")
+    except Exception as e:
+        print(f"⚠️ Error checking game completion: {e}")
 
 
 async def update_game_dashboard(game_id: str, bot: discord.Client) -> None:

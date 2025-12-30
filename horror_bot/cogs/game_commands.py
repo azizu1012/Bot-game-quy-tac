@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 HORROR BOT - GAME COMMANDS (Free-Form Text Actions)
 3-tier channel architecture: Lobby + Dashboard + Private Per-User
@@ -7,7 +8,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from database import db_manager
-from services import game_engine, map_generator, scenario_generator, llm_service, background_service
+from services import game_engine, map_generator, scenario_generator, llm_service, background_service, leaderboard_service
 import json
 import asyncio
 import random
@@ -62,8 +63,9 @@ class GameCommands(commands.Cog):
             scenario_value = scenario
         print(f"   └─ Scenario: {scenario_value}")
 
-        # Get game ID (use a unique ID, not channel_id)
-        game_id = str(uuid.uuid4())[:12]
+        # Get game ID - use a hash of game_code and user to create a unique integer
+        import hashlib
+        game_id = int(hashlib.md5(f"{game_code}{interaction.user.id}".encode()).hexdigest()[:16], 16) % (2**63)
         print(f"   └─ Game ID: {game_id}")
 
         # Load scenario map
@@ -74,8 +76,8 @@ class GameCommands(commands.Cog):
             await interaction.followup.send("❌ Lỗi: Không thể tạo bản đồ.", ephemeral=True)
             return
 
-        # Create 3-tier channel structure
-        print(f"   └─ Creating 3-tier channels...")
+        # Create channel structure: Lobby + Dashboard (as thread inside lobby)
+        print(f"   └─ Creating lobby channel...")
         try:
             category = interaction.guild.get_channel(guild_setup['category_id'])
             if not category or not isinstance(category, discord.CategoryChannel):
@@ -97,18 +99,13 @@ class GameCommands(commands.Cog):
             )
             print(f"      ✅ Lobby created: #{lobby_channel.name}")
 
-            # TIER 2: Dashboard channel (read-only)
-            dashboard_channel = await interaction.guild.create_text_channel(
-                name=f"game-dashboard-{random.randint(1000, 9999)}",
-                category=category,
-                overwrites={
-                    interaction.guild.default_role: discord.PermissionOverwrite(read_messages=True, send_messages=False),
-                    interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=False),
-                    self.bot.user: discord.PermissionOverwrite(read_messages=True, send_messages=True)
-                },
-                reason="Game dashboard (real-time stats, read-only)"
+            # TIER 2: Dashboard thread inside lobby
+            dashboard_thread = await lobby_channel.create_thread(
+                name=f"📊-dashboard-{scenario_value}",
+                auto_archive_duration=60
             )
-            print(f"      ✅ Dashboard created: #{dashboard_channel.name}")
+            print(f"      ✅ Dashboard thread created: #{dashboard_thread.name}")
+            dashboard_channel_id = dashboard_thread.id
 
         except discord.Forbidden:
             await interaction.followup.send("❌ Bot không có quyền tạo kênh.", ephemeral=True)
@@ -119,38 +116,58 @@ class GameCommands(commands.Cog):
 
         # Save to database
         print(f"   └─ Saving to database...")
-        await db_manager.execute_query(
-            """INSERT INTO active_games 
-               (channel_id, lobby_channel_id, dashboard_channel_id, host_id, 
-                game_creator_id, scenario_type, game_code, setup_by_admin_id, is_active) 
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)""",
-            (game_id, lobby_channel.id, dashboard_channel.id, interaction.user.id,
-             interaction.user.id, scenario_value, game_code, guild_setup['created_by']),
-            commit=True
-        )
+        try:
+            print(f"      └─ Inserting into active_games...")
+            await db_manager.execute_query(
+                """INSERT INTO active_games 
+                   (channel_id, lobby_channel_id, dashboard_channel_id, host_id, 
+                    game_creator_id, scenario_type, game_code, setup_by_admin_id, is_active) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)""",
+                (game_id, lobby_channel.id, dashboard_channel_id, interaction.user.id,
+                 interaction.user.id, scenario_value, game_code, guild_setup['created_by']),
+                commit=True
+            )
+            print(f"      ✅ active_games saved")
 
-        # Save map
-        await db_manager.execute_query(
-            "INSERT INTO game_maps (game_id, map_data) VALUES (?, ?)",
-            (game_id, json.dumps(game_map.to_dict())),
-            commit=True
-        )
+            # Save map
+            print(f"      └─ Inserting into game_maps...")
+            await db_manager.execute_query(
+                "INSERT INTO game_maps (game_id, map_data) VALUES (?, ?)",
+                (game_id, json.dumps(game_map.to_dict())),
+                commit=True
+            )
+            print(f"      ✅ game_maps saved")
 
-        # Initialize game context
-        await db_manager.execute_query(
-            """INSERT INTO game_context (game_id, scenario_type, current_threat_level) 
-               VALUES (?, ?, 0)""",
-            (game_id, scenario_value),
-            commit=True
-        )
+            # Initialize game context
+            print(f"      └─ Inserting into game_context...")
+            await db_manager.execute_query(
+                """INSERT INTO game_context (game_id, scenario_type, current_threat_level) 
+                   VALUES (?, ?, 0)""",
+                (game_id, scenario_value),
+                commit=True
+            )
+            print(f"      ✅ game_context saved")
 
-        # Add creator as first player
-        await self._add_player_to_game(interaction.user.id, game_id, game_map.start_node_id, scenario_value)
+            # Add creator as first player
+            print(f"      └─ Adding player to game...")
+            await self._add_player_to_game(interaction.user.id, game_id, game_map.start_node_id, scenario_value)
+            print(f"      ✅ Player added")
+
+        except Exception as e:
+            print(f"❌ Database error: {e}")
+            await interaction.followup.send(f"❌ Lỗi cơ sở dữ liệu: {e}", ephemeral=True)
+            return
 
         # Send lore to lobby
         print(f"   └─ Generating scenario lore...")
-        greeting = await llm_service.generate_simple_greeting(scenario_value)
+        try:
+            greeting = await llm_service.generate_simple_greeting(scenario_value)
+            print(f"      └─ Greeting generated: {greeting[:50]}...")
+        except Exception as e:
+            print(f"⚠️ Greeting error: {e}")
+            greeting = f"📍 Bạn đang ở {scenario_value}..."
         
+        # Create main embed with greeting
         embed = discord.Embed(
             title=f"📖 {scenario_value.upper()}",
             description=greeting,
@@ -169,12 +186,37 @@ class GameCommands(commands.Cog):
                 await self._start_game_for_player(btn_interaction, game_id, scenario_value)
 
         await lobby_channel.send(embed=embed, view=StartGameButton())
-        print(f"      ✅ Lore sent to lobby")
+        print(f"      ✅ Lore embed sent to lobby")
+        
+        # Generate and save game rules
+        print(f"   └─ Generating game rules...")
+        try:
+            rules_dict = await llm_service.generate_dark_rules(scenario_value)
+            await db_manager.save_game_rules(game_id, rules_dict)
+            
+            public_rules = rules_dict.get("public_rules", [])
+            if public_rules:
+                rules_text = "**📜 CÁC QUY TẮC SINH TỒN:**\n"
+                for i, rule in enumerate(public_rules, 1):
+                    rules_text += f"**{i}.** {rule.get('rule', '...')}\n"
+                rules_text += "\n*Hãy cẩn thận, không phải quy tắc nào cũng là lời khuyên tốt...*"
+                await lobby_channel.send(rules_text)
+                print(f"      ✅ Sent {len(public_rules)} public rules to lobby.")
+            else:
+                 await lobby_channel.send("**CẢNH BÁO:** Không có quy tắc nào được đặt ra. Hãy tự mình khám phá.")
+                 print(f"      ⚠️ No public rules were generated.")
+
+        except Exception as e:
+            print(f"      ⚠️ Error generating or sending rules: {e}")
+            await lobby_channel.send("**CẢNH BÁO:** Có lỗi khi tạo ra các quy tắc của thế giới này. Mọi thứ đều khó lường.")
+        
+        # Generate detailed world lore in background (non-blocking)
+        asyncio.create_task(self._send_world_lore_async(lobby_channel, scenario_value))
 
         # Notify in main channel
         await interaction.followup.send(
             f"🎮 **Phòng Mới!** {lobby_channel.mention}\n"
-            f"📊 Dashboard: {dashboard_channel.mention}\n"
+            f"📊 Dashboard: {dashboard_thread.mention}\n"
             f"Kịch Bản: `{scenario_value}`\n"
             f"Mã Phòng: `{game_code}`"
         )
@@ -182,19 +224,50 @@ class GameCommands(commands.Cog):
 
     async def _add_player_to_game(self, user_id: int, game_id: str, start_location_id: str, scenario_type: str):
         """Add player to game with default profile."""
-        profile = await background_service.create_player_profile(scenario_type)
-        
-        await db_manager.execute_query(
-            """INSERT INTO players 
-               (user_id, game_id, background_id, background_name, background_description,
-                hp, sanity, agi, acc, current_location_id, is_ready)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
-            (user_id, game_id, profile['background_id'], profile['background_name'],
-             profile['background_description'], profile['hp'], profile['sanity'],
-             profile['agi'], profile['acc'], start_location_id),
-            commit=True
-        )
-        print(f"      ✅ Player {user_id} added to game {game_id}")
+        try:
+            print(f"        └─ Creating player profile...")
+            profile = await background_service.create_player_profile(scenario_type)
+            print(f"        └─ Inserting player into database...")
+            
+            await db_manager.execute_query(
+                """INSERT INTO players 
+                   (user_id, game_id, background_id, background_name, background_description,
+                    hp, sanity, agi, acc, current_location_id, is_ready)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
+                (user_id, game_id, profile['background_id'], profile['background_name'],
+                 profile['background_description'], profile['hp'], profile['sanity'],
+                 profile['agi'], profile['acc'], start_location_id),
+                commit=True
+            )
+            print(f"        ✅ Player {user_id} added to game {game_id}")
+        except Exception as e:
+            print(f"        ❌ Error adding player: {e}")
+
+    async def _send_world_lore_async(self, lobby_channel: discord.TextChannel, scenario_type: str):
+        """Generate and send detailed world lore in background (non-blocking)."""
+        try:
+            print(f"      └─ Generating detailed world lore in background...")
+            world_lore = await llm_service.generate_world_lore(scenario_type)
+            print(f"      └─ World lore generated: {len(world_lore)} characters")
+            
+            if world_lore and len(world_lore) > 0:
+                # Split into chunks if too long (Discord message limit is 2000 chars)
+                chunks = [world_lore[i:i+1900] for i in range(0, len(world_lore), 1900)]
+                for i, chunk in enumerate(chunks):
+                    try:
+                        if i == 0:
+                            await lobby_channel.send(f"**📜 Chi tiết Lore:**\n{chunk}")
+                        else:
+                            await lobby_channel.send(f"**Tiếp tục:**\n{chunk}")
+                    except Exception as e:
+                        print(f"        ⚠️ Error sending lore chunk {i}: {e}")
+                print(f"      ✅ World lore sent ({len(chunks)} messages)")
+        except Exception as e:
+            print(f"      ⚠️ Error generating world lore: {e}")
+            try:
+                await lobby_channel.send(f"**📜 Lore:** *Đang tải chi tiết lore... (Lỗi: {str(e)[:50]})*")
+            except:
+                pass
 
     async def _start_game_for_player(self, interaction: discord.Interaction, game_id: str, scenario_type: str):
         """Create private channel for player when they click START button."""
@@ -339,6 +412,212 @@ LLM sẽ phân tích hành động của bạn và cập nhật kịch bản!"""
             channel=message.channel,
             bot=self.bot
         )
+
+    @app_commands.command(name="endgame", description="🏁 Kết thúc game (host tắt ngay, người khác vote 50%)")
+    async def end_game(self, interaction: discord.Interaction):
+        """End game - host can end immediately, others need 50% vote."""
+        await interaction.response.defer()
+        
+        user_id = interaction.user.id
+        
+        # Check if command is used in a lobby channel
+        if not interaction.channel.name.startswith("game-lobby-"):
+            await interaction.followup.send(
+                "❌ Lệnh này chỉ có thể dùng trong lobby của game!",
+                ephemeral=True
+            )
+            return
+        
+        # Find game by lobby channel
+        game = await db_manager.execute_query(
+            "SELECT channel_id, game_code, host_id FROM active_games WHERE lobby_channel_id = ?",
+            (interaction.channel.id,),
+            fetchone=True
+        )
+        
+        if not game:
+            await interaction.followup.send("❌ Game không tồn tại!", ephemeral=True)
+            return
+        
+        game_id = game['channel_id']
+        is_host = user_id == game['host_id']
+        
+        print(f"\n🏁 [ENDGAME] User {user_id} initiated endgame in game {game['game_code']}")
+        print(f"   └─ Is host: {is_host}")
+        
+        # Check if user is in game
+        player = await db_manager.execute_query(
+            "SELECT * FROM players WHERE user_id = ? AND game_id = ?",
+            (user_id, game_id),
+            fetchone=True
+        )
+        
+        if not player:
+            await interaction.followup.send("❌ Bạn không tham gia game này!", ephemeral=True)
+            return
+        
+        # If host, end immediately
+        if is_host:
+            print(f"   └─ Host ending game immediately")
+            await self._force_delete_game(game_id, game['game_code'], f"Host {interaction.user.name} ended")
+            await interaction.followup.send(
+                f"⛔ **Host {interaction.user.name} đã kết thúc game!**\nTất cả channels sẽ bị xóa...",
+                ephemeral=False
+            )
+            return
+        
+        # For non-host players, create a vote
+        print(f"   └─ Non-host player, starting vote")
+        
+        # Get all players in game
+        all_players = await db_manager.execute_query(
+            "SELECT user_id FROM players WHERE game_id = ?",
+            (game_id,),
+            fetchall=True
+        )
+        
+        total_players = len(all_players)
+        votes_needed = max(1, (total_players + 1) // 2)  # 50% + 1 for majority
+        
+        print(f"   └─ Total players: {total_players}, votes needed: {votes_needed}")
+        
+        # Create vote view
+        class EndGameVote(discord.ui.View):
+            def __init__(vote_self):
+                super().__init__(timeout=300)  # 5 minutes vote
+                vote_self.votes = {user_id}  # Initiator votes yes
+                vote_self.voted_users = {user_id}
+                vote_self.voted = False
+            
+            @discord.ui.button(label="✅ Đồng ý (0/X)", style=discord.ButtonStyle.green)
+            async def agree_button(vote_self, btn_interaction: discord.Interaction, button: discord.ui.Button):
+                if btn_interaction.user.id in vote_self.voted_users:
+                    await btn_interaction.response.send_message("Bạn đã vote rồi!", ephemeral=True)
+                    return
+                
+                vote_self.votes.add(btn_interaction.user.id)
+                vote_self.voted_users.add(btn_interaction.user.id)
+                
+                # Update button label
+                button.label = f"✅ Đồng ý ({len(vote_self.votes)}/{votes_needed})"
+                
+                await btn_interaction.response.defer()
+                
+                # Check if vote passed
+                if len(vote_self.votes) >= votes_needed:
+                    vote_self.voted = True
+                    for item in vote_self.children:
+                        item.disabled = True
+                    
+                    await interaction.channel.send(
+                        f"✅ **Vote thông qua!** Kết thúc game `{game['game_code']}`..."
+                    )
+                    await self._force_delete_game(game_id, game['game_code'], 
+                                                 f"Voted ended by {interaction.user.name}")
+                    print(f"✅ [ENDGAME] Game {game['game_code']} ended by vote\n")
+                
+                # Update the vote message
+                await vote_msg.edit(view=vote_self)
+            
+            @discord.ui.button(label="❌ Từ chối", style=discord.ButtonStyle.red)
+            async def refuse_button(vote_self, btn_interaction: discord.Interaction, button: discord.ui.Button):
+                if btn_interaction.user.id in vote_self.voted_users:
+                    await btn_interaction.response.send_message("Bạn đã vote rồi!", ephemeral=True)
+                    return
+                
+                vote_self.voted_users.add(btn_interaction.user.id)
+                
+                await btn_interaction.response.defer()
+                
+                # Check if refuse votes enough to block
+                refuse_votes = total_players - len(vote_self.votes)
+                if refuse_votes >= votes_needed:
+                    vote_self.voted = False
+                    for item in vote_self.children:
+                        item.disabled = True
+                    
+                    await interaction.channel.send(
+                        f"❌ **Vote bị từ chối!** Game tiếp tục..."
+                    )
+                    print(f"❌ [ENDGAME] Vote rejected for game {game['game_code']}\n")
+                
+                # Update the vote message
+                agree_button = vote_self.children[0]
+                agree_button.label = f"✅ Đồng ý ({len(vote_self.votes)}/{votes_needed})"
+                await vote_msg.edit(view=vote_self)
+        
+        vote = EndGameVote()
+        agree_button = vote.children[0]
+        agree_button.label = f"✅ Đồng ý (1/{votes_needed})"
+        
+        vote_msg = await interaction.followup.send(
+            f"🗳️ **{interaction.user.name} muốn kết thúc game!**\n"
+            f"Cần {votes_needed}/{total_players} phiếu đồng ý\n"
+            f"*Vote sẽ đóng trong 5 phút*",
+            view=vote,
+            ephemeral=False
+        )
+    
+    async def _force_delete_game(self, game_id: str, game_code: str, reason: str):
+        """Delete game and all related channels."""
+        try:
+            print(f"   └─ Deleting game {game_code}: {reason}")
+            
+            # Get game info
+            game = await db_manager.execute_query(
+                "SELECT lobby_channel_id, dashboard_channel_id FROM active_games WHERE channel_id = ?",
+                (game_id,),
+                fetchone=True
+            )
+            
+            if game:
+                # Get all players and delete their private channels
+                players = await db_manager.execute_query(
+                    "SELECT private_channel_id FROM players WHERE game_id = ?",
+                    (game_id,),
+                    fetchall=True
+                )
+                
+                for player in players:
+                    if player['private_channel_id']:
+                        try:
+                            channel = self.bot.get_channel(int(player['private_channel_id']))
+                            if channel:
+                                await channel.delete(reason=reason)
+                        except Exception as e:
+                            print(f"      ⚠️ Error deleting private channel: {e}")
+                
+                # Delete lobby and dashboard
+                for channel_id in [game['lobby_channel_id'], game['dashboard_channel_id']]:
+                    if channel_id:
+                        try:
+                            channel = self.bot.get_channel(int(channel_id))
+                            if channel:
+                                await channel.delete(reason=reason)
+                        except Exception as e:
+                            print(f"      ⚠️ Error deleting channel: {e}")
+            
+            # Delete from database
+            await db_manager.execute_query(
+                "DELETE FROM players WHERE game_id = ?",
+                (game_id,),
+                commit=True
+            )
+            await db_manager.execute_query(
+                "DELETE FROM active_games WHERE channel_id = ?",
+                (game_id,),
+                commit=True
+            )
+            await db_manager.execute_query(
+                "DELETE FROM game_maps WHERE game_id = ?",
+                (game_id,),
+                commit=True
+            )
+            
+            print(f"      ✅ Game deleted: {game_code}\n")
+            
+        except Exception as e:
+            print(f"❌ Error in _force_delete_game: {e}")
 
 
 async def setup(bot: commands.Bot):

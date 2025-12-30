@@ -6,6 +6,7 @@ Unified service for all LLM inference - turn narratives, per-player actions, enc
 import asyncio
 import json
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
 try:
@@ -22,6 +23,35 @@ n_ctx = int(os.getenv("LLM_CONTEXT_SIZE", "8192"))
 
 # Global model instance
 _llm = None
+
+# Prompt loading utility
+_prompt_cache = {}
+PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
+DATA_DIR = Path(__file__).parent.parent / "data"
+
+def get_prompt(prompt_name: str, **kwargs) -> str:
+    """Loads a prompt from a file, caches it, and formats it with kwargs."""
+    if prompt_name not in _prompt_cache:
+        prompt_path = PROMPTS_DIR / f"{prompt_name}.txt"
+        try:
+            with open(prompt_path, "r", encoding="utf-8") as f:
+                _prompt_cache[prompt_name] = f.read()
+        except FileNotFoundError:
+            print(f"❌ Lỗi: Không tìm thấy file prompt: {prompt_path}")
+            return "" # Return empty string if prompt not found
+            
+    return _prompt_cache[prompt_name].format(**kwargs)
+
+def read_data_file(file_path: str) -> str | None:
+    """Reads a text file from the data directory."""
+    full_path = DATA_DIR / file_path
+    try:
+        with open(full_path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        print(f"❌ Lỗi: Không tìm thấy data file: {full_path}")
+        return None
+
 
 def load_llm():
     """Load Qwen model once for entire bot lifecycle."""
@@ -99,13 +129,21 @@ async def process_player_action(
         content = msg.get('content', '')
         messages_text += f"{role}: {content}\n"
 
-    prompt = f"""<|im_start|>system
-{system_prompt}<|im_end|>
-{messages_text}
-<|im_start|>user
-{action_text}<|im_end|>
-<|im_start|>assistant
-"""
+    prompt = get_prompt(
+        "process_player_action",
+        system_prompt=system_prompt,
+        messages_text=messages_text,
+        action_text=action_text
+    )
+    if not prompt:
+        return json.dumps({
+            "success": False,
+            "description": "Lỗi: Không tìm thấy file prompt.",
+            "hp_change": 0,
+            "sanity_change": 0,
+            "new_location_id": "same",
+            "discovered_items": []
+        })
 
     loop = asyncio.get_running_loop()
 
@@ -156,20 +194,15 @@ async def generate_encounter(
         other_names = ", ".join(other_players)
         return f"Bạn gặp {other_names}. Cảm giác rất kỳ lạ..."
 
-    prompt = f"""<|im_start|>system
-Bạn là Dungeon Master kinh dí. Một tình huống gặp gỡ vừa xảy ra trong scenario {scenario_type}.
-
-{player_name} vừa {action_description}
-
-Các nhân vật khác tại đây: {', '.join(other_players)}
-
-Hãy mô tả cảnh gặp gỡ bất ngờ này một cách kinh dí và sống động (2-3 câu). 
-Tone: bí ẩn, căng thẳng, không chắc chắn.
-<|im_end|>
-<|im_start|>user
-Mô tả cảnh gặp gỡ này<|im_end|>
-<|im_start|>assistant
-"""
+    prompt = get_prompt(
+        "generate_encounter",
+        scenario_type=scenario_type,
+        player_name=player_name,
+        action_description=action_description,
+        other_players=', '.join(other_players)
+    )
+    if not prompt:
+        return f"Bạn gặp {', '.join(other_players)} trong tối tối..."
 
     loop = asyncio.get_running_loop()
 
@@ -198,12 +231,9 @@ async def describe_scene(keywords: list) -> str:
     if _llm is None:
         return "Không gian tĩnh mịch... (AI chưa load)"
 
-    prompt = f"""<|im_start|>system
-Bạn là quản trò game kinh dí. Hãy viết một đoạn văn mô tả ngắn (dưới 50 từ) dựa trên các từ khóa: {', '.join(keywords)}. Giọng văn u ám, đáng sợ.<|im_end|>
-<|im_start|>user
-Mô tả cảnh này.<|im_end|>
-<|im_start|>assistant
-"""
+    prompt = get_prompt("describe_scene", keywords=', '.join(keywords))
+    if not prompt:
+        return "Không gian tĩnh mịch... (AI chưa load)"
 
     loop = asyncio.get_running_loop()
     
@@ -225,12 +255,9 @@ async def describe_scene_stream(keywords: list, callback=None) -> str:
     if _llm is None:
         return "Không gian tĩnh mịch... (AI chưa load)"
 
-    prompt = f"""<|im_start|>system
-Bạn là quản trò game kinh dí. Hãy viết một đoạn văn mô tả ngắn (dưới 50 từ) dựa trên các từ khóa: {', '.join(keywords)}. Giọng văn u ám, đáng sợ.<|im_end|>
-<|im_start|>user
-Mô tả cảnh này.<|im_end|>
-<|im_start|>assistant
-"""
+    prompt = get_prompt("describe_scene", keywords=', '.join(keywords))
+    if not prompt:
+        return "Không gian tĩnh mịch... (AI chưa load)"
 
     loop = asyncio.get_running_loop()
     
@@ -254,29 +281,55 @@ Mô tả cảnh này.<|im_end|>
     return await loop.run_in_executor(None, run_inference)
 
 
-async def generate_dark_rules(scenario_type: str) -> str:
+async def generate_dark_rules(scenario_type: str) -> dict:
     """Generate a set of dark rules for the game scenario like Chinese novels."""
+    default_response = {"public_rules": [], "hidden_rules": []}
     if _llm is None:
-        return "Không có quy tắc... (AI chưa load)"
+        print("⚠️ LLM not loaded, returning empty rules.")
+        return default_response
 
-    prompt = f"""<|im_start|>system
-Bạn là tác giả tiểu thuyết kinh dị châu Á. Hãy tạo 3-4 quy tắc ma quái, u ám cho một trò chơi kinh dí trong scenario '{scenario_type}'. Viết dưới dạng danh sách với tone muốn rợn người, huyền bí, giống như các tiểu thuyết Trung Quốc cổ. Giữ ngắn gọn, mỗi quy tắc 1-2 câu.<|im_end|>
-<|im_start|>user
-Tạo những quy tắc quỷ dị cho scenario này.<|im_end|>
-<|im_start|>assistant
-"""
+    prompt = get_prompt("generate_dark_rules", scenario_type=scenario_type)
+    if not prompt:
+        return default_response
 
     loop = asyncio.get_running_loop()
     
     def run_inference():
-        output = _llm(
-            prompt,
-            max_tokens=200,
-            stop=["<|im_end|>", "\n\n\n"],
-            echo=False,
-            temperature=0.8
-        )
-        return output['choices'][0]['text'].strip()
+        try:
+            output = _llm(
+                prompt,
+                max_tokens=1500,  # Increased token limit for JSON output
+                stop=["<|im_end|>", "```"],
+                echo=False,
+                temperature=0.8
+            )
+            raw_text = output['choices'][0]['text'].strip()
+            
+            # Find the JSON block
+            json_start = raw_text.find('{')
+            json_end = raw_text.rfind('}') + 1
+            if json_start == -1 or json_end == 0:
+                print(f"❌ Lỗi: Không tìm thấy JSON trong output của LLM.\nOutput: {raw_text}")
+                return default_response
+
+            json_text = raw_text[json_start:json_end]
+            
+            # Parse the JSON
+            parsed_json = json.loads(json_text)
+            
+            # Validate structure
+            if "public_rules" not in parsed_json or "hidden_rules" not in parsed_json:
+                print(f"❌ Lỗi: JSON output thiếu key 'public_rules' hoặc 'hidden_rules'.\nOutput: {json_text}")
+                return default_response
+            
+            return parsed_json
+
+        except json.JSONDecodeError as e:
+            print(f"❌ Lỗi giải mã JSON: {e}\nRaw text: {raw_text}")
+            return default_response
+        except Exception as e:
+            print(f"❌ Lỗi không xác định trong generate_dark_rules: {e}")
+            return default_response
 
     return await loop.run_in_executor(None, run_inference)
 
@@ -286,12 +339,13 @@ async def generate_waiting_room_message(num_players: int, total_slots: int = 8) 
     if _llm is None:
         return f"Đang chờ đủ người tham gia... ({num_players}/{total_slots})"
 
-    prompt = f"""<|im_start|>system
-Bạn là quản trò game kinh dí. Hãy viết một lời chào tự nhiên, huyền bí khoảng 2-3 câu để đón các người chơi tới phòng chờ. Tone: bí ẩn, đáng sợ. Sau đó thêm dòng yêu cầu: "Đang chờ {num_players}/{total_slots} người chơi xác nhận..."<|im_end|>
-<|im_start|>user
-Viết lời chào cho phòng chờ.<|im_end|>
-<|im_start|>assistant
-"""
+    prompt = get_prompt(
+        "generate_waiting_room_message",
+        num_players=num_players,
+        total_slots=total_slots
+    )
+    if not prompt:
+        return f"Đang chờ đủ người tham gia... ({num_players}/{total_slots})"
 
     loop = asyncio.get_running_loop()
     
@@ -309,48 +363,104 @@ Viết lời chào cho phòng chờ.<|im_end|>
 
 
 async def generate_simple_greeting(scenario_type: str) -> str:
-    """Generate a simple greeting when creating game room (preset, no LLM)."""
-    greetings = {
-        "asylum": "🏥 Một bệnh viện tâm thần lạnh lẽo, những chiếc giường trống... Bạn nghe tiếng động vang vang...",
-        "factory": "🏭 Một nhà máy cũ kỹ, máy móc gỉ sét. Ánh sáng mờ từ cửa sổ vỡ...",
-        "ghost_village": "👻 Một ngôi làng hoang vắng, nhà cửa đổ nát. Gió lạnh thổi qua...",
-        "cursed_mansion": "🏰 Một lâu đài bị nguyền rủa. Bóng tối bao phủ mọi nơi...",
-        "mine": "⛏️ Một mỏ than sâu thẳm, đầy vết nứt. Tiếng nước chảy từ dưới...",
-        "prison": "⛓️ Một nhà tù cũ, những cell sắt gỉ sét. Âm thanh tiếng la hơ...",
-        "abyss": "🌑 Một vực thẳm sâu, bóng tối không dứt. Bạn không biết dưới có gì...",
-        "dead_forest": "🌲 Một khu rừng chết, cây cổ thụ héo úa. Vẫn còn mùi xác thối...",
-        "research_hospital": "🔬 Một bệnh viện nghiên cứu bí mật, tấm kính đen kín...",
-        "ghost_ship": "⛵ Một chiếc tàu bỏ hoang, sàn gỗ mục nát. Tiếng biển vang xa...",
-    }
-    
-    return greetings.get(scenario_type, f"📍 Phòng {scenario_type} đợi bạn khám phá...")
+    """Generate a simple greeting when creating game room by reading from a file."""
+    greeting = read_data_file(f"lore/{scenario_type}/greeting.txt")
+    return greeting or f"📍 Phòng {scenario_type} đợi bạn khám phá..."
 
 
 async def generate_world_lore(scenario_type: str) -> str:
     """Generate detailed world lore for the scenario (can be long, will be chunked)."""
+    # Get fallback lore from file
+    fallback_lore = read_data_file(f"lore/{scenario_type}/lore.txt") or "Thế giới bí ẩn... (Không tìm thấy file lore)"
+    
+    # If LLM is not available, return fallback
     if _llm is None:
-        return "Thế giới bí ẩn... (AI chưa load)"
+        return fallback_lore
 
-    prompt = f"""<|im_start|>system
-Bạn là một tác giả tiểu thuyết kinh dị. Hãy viết lore chi tiết (300-400 từ) cho một thế giới kinh dí scenario '{scenario_type}'. 
-Tone: huyền bí, đáng sợ, chi tiết, như các tiểu thuyết Trung Quốc cổ.
-Mô tả: nguyên nhân bí ẩn, các quy tắc quỷ dị, những gì đang xảy ra, cảm giác khó chịu, các yếu tố siêu nhiên.
-Viết bằng tiếng Việt, giữ âm hưởng ma quái.<|im_end|>
-<|im_start|>user
-Viết lore chi tiết cho scenario này.<|im_end|>
-<|im_start|>assistant
-"""
+    # Prepare reference lore for the prompt
+    reference_lore = f"\nTham khảo: {fallback_lore[:150]}"
+
+    # Get prompt from file
+    prompt = get_prompt(
+        "generate_world_lore",
+        scenario_type=scenario_type,
+        reference_lore=reference_lore
+    )
+    
+    if not prompt: # Handle case where prompt file is missing
+        return fallback_lore
 
     loop = asyncio.get_running_loop()
     
     def run_inference():
-        output = _llm(
-            prompt,
-            max_tokens=500,
-            stop=["<|im_end|>"],
-            echo=False,
-            temperature=0.8
-        )
-        return output['choices'][0]['text'].strip()
+        try:
+            output = _llm(
+                prompt,
+                max_tokens=500,
+                stop=["<|im_end|>"],
+                echo=False,
+                temperature=0.7
+            )
+            result = output['choices'][0]['text'].strip()
+            # If result looks like a refusal, return fallback
+            if len(result) < 50 or "không thể" in result.lower() or "xin lỗi" in result.lower():
+                return fallback_lore
+            return result
+        except Exception as e:
+            print(f"⚠️ LLM error in generate_world_lore: {e}")
+            return fallback_lore
+
+    return await loop.run_in_executor(None, run_inference)
+
+
+async def check_rule_violation(hidden_rules: list, action_text: str, action_description: str) -> dict:
+    """Checks if a player's action violates any of the hidden rules."""
+    default_response = {"violated": False, "reason": "Lỗi hệ thống phán xét."}
+    if _llm is None or not hidden_rules:
+        return default_response
+
+    # Format hidden rules into a numbered list string
+    rules_text = ""
+    for i, rule in enumerate(hidden_rules, 1):
+        rules_text += f"{i}. {rule['rule_text']}\n"
+
+    prompt = get_prompt(
+        "check_rule_violation",
+        hidden_rules=rules_text,
+        action_text=action_text,
+        action_description=action_description
+    )
+    if not prompt:
+        return default_response
+
+    loop = asyncio.get_running_loop()
+
+    def run_inference():
+        try:
+            output = _llm(
+                prompt,
+                max_tokens=300,
+                stop=["<|im_end|>", "```"],
+                echo=False,
+                temperature=0.2  # Low temperature for logical reasoning
+            )
+            raw_text = output['choices'][0]['text'].strip()
+
+            # Find the JSON block
+            json_start = raw_text.find('{')
+            json_end = raw_text.rfind('}') + 1
+            if json_start == -1 or json_end == 0:
+                print(f"❌ Lỗi: [Rule Check] Không tìm thấy JSON trong output.\nOutput: {raw_text}")
+                return default_response
+
+            json_text = raw_text[json_start:json_end]
+            return json.loads(json_text)
+
+        except json.JSONDecodeError as e:
+            print(f"❌ Lỗi: [Rule Check] Giải mã JSON thất bại: {e}\nRaw text: {raw_text}")
+            return default_response
+        except Exception as e:
+            print(f"❌ Lỗi không xác định trong check_rule_violation: {e}")
+            return default_response
 
     return await loop.run_in_executor(None, run_inference)

@@ -8,6 +8,11 @@
   "min_rooms_per_floor": 8,
   "max_rooms_per_floor": 15,
   "atmosphere": "Tiếng kêu la từ những cảnh phòng giam, máu khô trên tường, sắt gỉ kêu gào, những chuỗi xích",
+  "objectives": [
+    "Tìm chìa khóa thoát khỏi牢房",
+    "Vượt qua phòng hành quyết mà không bị quỷ dị tấn công",
+    "Tìm ra lối thoát chính (cửa sắt lớn phía đông)"
+  ],
   "spawn_creatures": [
     "tù_nhân_ma",
     "quỷ_giam_hàm",

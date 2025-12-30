@@ -8,6 +8,11 @@
   "min_rooms_per_floor": 4,
   "max_rooms_per_floor": 8,
   "atmosphere": "Bức tường thở ra máu, những cô gái ma lờ mờ trong gương, tiếng nhạc phím buồn từ phòng trống",
+  "objectives": [
+    "Tìm sáng chủ cũ của lâu đài",
+    "Phá bỏ lời nguyền bằng cách tiêu diệt linh hồn chính",
+    "Vượt qua phòng ngai vàng để thoát ra"
+  ],
   "spawn_creatures": [
     "quý_tộc_ma",
     "cô_gái_ma",

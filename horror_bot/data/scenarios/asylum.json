@@ -8,6 +8,11 @@
   "min_rooms_per_floor": 5,
   "max_rooms_per_floor": 10,
   "atmosphere": "Những tiếng thét histerical vang vừng qua hành lang, máu cũ trên tường, các tầng hầm toàn đàn áp",
+  "objectives": [
+    "Tìm hồ sơ các bệnh nhân bị giam cầm",
+    "Thoát khỏi các phòng thí nghiệm tối đen",
+    "Tìm lối ra từ tầng hầm chính"
+  ],
   "spawn_creatures": [
     "bệnh_nhân_ma",
     "y_tá_điên_loạn",

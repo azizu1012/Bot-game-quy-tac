@@ -1,599 +1,66 @@
-================================================================================
-    PHÂN TÍCH CẤU TRÚC DỰ ÁN: HORROR BOT - DISCORD HORROR GAME
-    Full Stack Python Project - discord.py + SQLite + Local LLM (Per-User Sessions)
-================================================================================
+# Tài liệu Horror Bot (v3)
 
-🎯 TỔNG QUAN DỰ ÁN
-================================================================================
-Dự án là một Discord Bot chơi game kinh dí hợp tác (multiplayer horror game).
-Người chơi tham gia các phòng game trên Discord, tương tác qua free-form text
-prompts để sinh tồn trong các kịch bản kinh dí. Bot sử dụng:
-- Local LLM (llama-cpp-python) với per-user isolation để sinh diễn biến, mô tả cảnh
-- SQLite (aiosqlite) để lưu trạng thái game, người chơi, conversation history
-- discord.py để quản lý bot, commands, UI
+## 1. Tổng quan
 
-Kiến trúc hiện tại: Hệ thống 3-tier channels (Lobby → Dashboard → Private Per-User),
-per-user LLM conversation history (10-message rolling window), free-form text actions,
-automatic encounter detection, real-time dashboard updates.
+Project này là một bot Discord cho phép người dùng chơi một trò chơi phiêu lưu kinh dị dạng text (text-based adventure). Bot sử dụng một Large Language Model (LLM) chạy local (`qwen2.5-1.5b-instruct-q4_k_m.gguf`) để tạo ra các mô tả, sự kiện, và một hệ thống "Quy tắc Sinh tồn" (Quái Đàm) phức tạp.
 
-================================================================================
-📁 CẤU TRÚC THƯ MỤC & CÁC FILE CHỦ YẾU
-================================================================================
+Kiến trúc của bot được thiết kế theo module để dễ dàng quản lý và mở rộng, tách biệt rõ ràng giữa logic, nội dung game và chỉ dẫn AI.
 
-┌─ horror_bot/ (Thư mục gốc dự án)
-│
-├─ main.py ⭐ ENTRY POINT
-│  └─ Vai trò: Khởi tạo Discord Bot, tải Database, tải LLM
-│  └─ Chức năng chính:
-│     • Tạo bot instance với discord.py
-│     • Event on_ready: Tải Database schema, Load LLM model
-│     • Tải 3 cogs: admin_commands, game_commands, game_ui
-│     • Khởi động bot với token từ .env
-│
-├─ config.py ⚙️ CẤU HÌNH TOÀN CỤC
-│  └─ Bao gồm:
-│     • TURN_TIME_SECONDS = 60 (thời gian mỗi lượt)
-│     • THINKING_PHASE_SECONDS = 30 (thảo luận giữa lượt)
-│     • DEFAULT_MAP_CONFIG: Cấu hình maps cho 12 kịch bản
-│       - Mỗi kịch bản có min/max floors, min/max rooms per floor
-│       - Ví dụ: Asylum (4-6 tầng), Factory (5-7 tầng), Abyss (10-15 tầng)
-│
-├─ requirements.txt 📦 DEPENDENCIES
-│  ├─ discord.py (Discord Bot framework)
-│  ├─ python-dotenv (Load .env file)
-│  ├─ aiosqlite (Async SQLite driver)
-│  ├─ llama-cpp-python (Local LLM inference)
-│  └─ huggingface-hub (Download models)
-│
-├─ .env 🔐 BIẾN MÔI TRƯỜNG (không trong repo)
-│  ├─ DISCORD_TOKEN (Bot token từ Discord)
-│  ├─ LLM_MODEL_PATH (Đường dẫn file .gguf model)
-│  ├─ LLM_N_THREADS (Số CPU threads cho LLM)
-│  └─ LLM_CONTEXT_SIZE (Context window kích thước)
-│
-├─ setup.sh 🚀 SCRIPT KHỞI ĐỘNG (Bash script)
-│  └─ Cấu hình Python venv, install dependencies, tải model
-│
-├─ download_model.py 🤖 DOWNLOAD LLM MODEL
-│  └─ Download mô hình Qwen-1.5B GGUF từ Hugging Face
-│  └─ Lưu tại đường dẫn được chỉ định trong .env
-│
-├─ database/ 🗄️ QUẢN LÝ DATABASE
-│  ├─ schema.sql: SQL schema định nghĩa bảng
-│  │  ├─ active_games: Lưu game sessions đang chạy
-│  │  │  └─ Columns: game_id (UUID), lobby_channel_id, dashboard_channel_id,
-│  │  │              dashboard_message_id, host_id, game_creator_id,
-│  │  │              scenario_type, game_code, is_active,
-│  │  │              setup_by_admin_id
-│  │  │  └─ Thay đổi từ v3: Removed turn_deadline_ts, waiting_room_stage,
-│  │  │                      turn-based columns (chuyển sang continuous free-form)
-│  │  │  └─ Thêm: 3-tier channel IDs, dashboard_message_id (for real-time updates)
-│  │  ├─ game_setups: Config admin (category để tạo rooms)
-│  │  │  └─ Columns: setup_id, guild_id, category_id, created_by, created_at
-│  │  ├─ game_maps: Lưu map data (JSON)
-│  │  │  └─ Columns: game_id, map_data (JSON structure)
-│  │  ├─ players: Thông tin người chơi (REDESIGNED)
-│  │  │  └─ Columns: user_id, game_id, hp, sanity, agi, acc,
-│  │  │              background_id, background_name, background_description,
-│  │  │              current_location_id, location_name (cached),
-│  │  │              inventory (JSON items),
-│  │  │              private_channel_id (per-user isolation),
-│  │  │              llm_conversation_history (JSON, rolling 10 messages),
-│  │  │              is_ready (boolean), last_action_result (JSON)
-│  │  │  └─ Thay đổi từ v3: Removed turn-based columns (has_acted, action_this_turn,
-│  │  │                      confirmed_action, waiting_room_confirmed, voted_end_game)
-│  │  │  └─ Thêm: private_channel_id, llm_conversation_history, location_name, is_ready
-│  │  ├─ game_rules: Quy tắc game (10 public + 10 hidden)
-│  │  │  └─ Columns: rule_id, game_id, rule_text, is_public,
-│  │  │              rule_type (lore/mechanic/clue/warning),
-│  │  │              discovery_requirement
-│  │  ├─ game_context: Context cho LLM penalties
-│  │  │  └─ Columns: context_id, game_id, scenario_type,
-│  │  │             current_threat_level, active_dangers (JSON),
-│  │  │             recent_events (JSON)
-│  │  └─ player_encounters: Lưu encounter log khi players gặp nhau (NEW)
-│  │     └─ Columns: encounter_id, game_id, location_id, player_ids (JSON array),
-│  │                  encounter_text (LLM-generated), timestamp
-│  │
-│  └─ db_manager.py: Async database helper functions
-│     ├─ execute_query(): Chạy SQL query với aiosqlite
-│     ├─ Player management: check_player_in_game(), get_player_current_game()
-│     ├─ Game management: get_game_creator(), cleanup_game()
-│     ├─ Rules system: get_game_rules(), discover_hidden_rule()
-│     ├─ Sanity system: update_player_sanity(), get_threat_level()
-│     └─ NEW V4 Helper Functions:
-│        ├─ get_players_at_location(game_id, location_id):
-│        │  └─ Returns [user_id, background_name, private_channel_id, hp]
-│        │  └─ Dùng để detect encounters (2+ players tại cùng location)
-│        ├─ get_game_by_id(game_id): Fetch game record by UUID
-│        ├─ update_player_stats(user_id, game_id, hp_change, sanity_change):
-│        │  └─ Atomic update với clamping (0-100)
-│        ├─ append_to_llm_history(user_id, game_id, role, message):
-│        │  └─ Thêm message vào conversation history, giữ last 10
-│        ├─ get_llm_history(user_id, game_id):
-│        │  └─ Retrieves JSON conversation history (list của dict)
-│        └─ record_encounter(game_id, location_id, player_ids, encounter_text):
-│           └─ Logs encounter to player_encounters table
-│
-├─ cogs/ 🔌 BOT COMMANDS & UI (Discord.py Cogs - modular extensions)
-│  ├─ admin_commands.py: Admin-only commands
-│  │  ├─ /sync: Đồng bộ slash commands toàn cục hoặc per-guild
-│  │  └─ /setup [category]: Admin thiết lập Category để tạo game rooms
-│  │     └─ Lưu vào game_setups table, kiểm tra admin permission
-│  │
-│  ├─ game_commands.py: Game flow commands (REDESIGNED FOR FREE-FORM ACTIONS)
-│  │  ├─ /newgame [scenario]: Tạo phòng game mới (3-tier channel architecture)
-│  │  │  ├─ Kiểm tra admin setup tồn tại (nếu không => lỗi)
-│  │  │  ├─ Tạo Category nếu cần
-│  │  │  ├─ Tier 1 (Lobby Channel): Hiển thị lore, button START
-│  │  │  │  └─ Tất cả players trong game có thể xem (read-only lore updates)
-│  │  │  ├─ Tier 2 (Dashboard Channel): Read-only player stats
-│  │  │  │  └─ Edits in-place, không spam (1 message updated continuously)
-│  │  │  ├─ Generate greeting + map, lưu game_maps
-│  │  │  ├─ Sinh 20 quy tắc (10 public, 10 hidden)
-│  │  │  └─ Thêm creator như player đầu tiên (is_ready = 0)
-│  │  │
-│  │  ├─ START Button Handler (_start_game_for_player):
-│  │  │  ├─ Tạo Tier 3 (Private Channel): private-[player-name]-[random]
-│  │  │  ├─ Update players.private_channel_id
-│  │  │  ├─ Send welcome message + initial scene description
-│  │  │  └─ Mark is_ready = 1
-│  │  │
-│  │  ├─ on_message Listener (MESSAGE ROUTING):
-│  │  │  ├─ Intercepts messages trong private-* channels
-│  │  │  ├─ Routes to game_engine.process_free_text_action()
-│  │  │  ├─ No emoji reactions, pure natural language
-│  │  │  └─ Example: Player types "Tôi tìm kiếm trong phòng"
-│  │  │             => LLM processes, updates stats, returns description
-│  │  │
-│  │  ├─ /endgame: Kết thúc game
-│  │  │  ├─ Nếu creator: End ngay, cleanup all data
-│  │  │  └─ Nếu player khác: Vote (50%+ để pass), cleanup khi pass
-│  │  │
-│  │  └─ Helper functions:
-│  │     ├─ _add_player_to_game(): Thêm player với default profile
-│  │     ├─ _start_game_for_player(): Create Tier 3 channel
-│  │     └─ chunk_text(): Split text cho 2000 char limit
-│  │
-│  └─ game_ui.py: UI components & embeds (UNCHANGED)
-│     ├─ create_progress_bar(): Text-based progress bar [████░░░░]
-│     ├─ Embed classes (if needed)
-│     └─ Helper functions
-│
-├─ services/ 🔧 GAME LOGIC & AI
-│  ├─ llm_service.py: LLM inference (PER-USER ISOLATION)
-│  │  ├─ load_llm(): Tải model GGUF từ đường dẫn (load once in main.py)
-│  │  │  └─ Qwen-1.5B model, n_ctx=8192, n_threads từ config
-│  │  │
-│  │  ├─ async process_player_action(action_text, system_prompt, conversation_history):
-│  │  │  ├─ Per-player system prompt (includes scenario context, current location, stats)
-│  │  │  ├─ Builds prompt với last 5 messages từ conversation history
-│  │  │  ├─ Calls LLM with Qwen chat template
-│  │  │  ├─ Returns JSON: {success, description, hp_change, sanity_change,
-│  │  │  │                  new_location_id, discovered_items}
-│  │  │  ├─ 500 token max output, 30s timeout
-│  │  │  └─ Ensures each player's action context là isolated (no cross-talk)
-│  │  │
-│  │  ├─ async generate_simple_greeting(scenario_type):
-│  │  │  └─ Preset dict (no LLM, instant greeting)
-│  │  │
-│  │  ├─ async generate_encounter(action_description, player_name, other_players, scenario_type):
-│  │  │  └─ LLM generates 2-3 sentence encounter text when players meet
-│  │  │
-│  │  └─ async describe_scene(keywords):
-│  │     └─ Optional narrative generation (50 words, for lobby lore updates)
-│  │
-│  ├─ game_engine.py: Free-form action processing (6-STEP PIPELINE)
-│  │  ├─ async process_free_text_action(player_id, game_id, action_text, channel, bot):
-│  │  │  ├─ Step 1: Gather context
-│  │  │  │  └─ Query player stats, inventory, location, llm_conversation_history
-│  │  │  ├─ Step 2: Call LLM with per-player DM prompt
-│  │  │  │  └─ LLM receives: location description, player stats, inventory, last 5 messages
-│  │  │  ├─ Step 3: Parse LLM JSON response, update DB atomically
-│  │  │  │  └─ Update hp, sanity, location, inventory, conversation_history
-│  │  │  ├─ Step 4: Check for encounters
-│  │  │  │  └─ get_players_at_location() => if 2+ => generate_encounter()
-│  │  │  ├─ Step 5: Update real-time dashboard
-│  │  │  │  └─ update_game_dashboard() edits existing message
-│  │  │  └─ Step 6: Send response to player's private channel
-│  │  │     └─ Formatted embed with stats delta, description
-│  │  │
-│  │  ├─ async update_game_dashboard(game_id, bot):
-│  │  │  ├─ Fetches tất cả players in game
-│  │  │  ├─ Builds embed with HP/Sanity bars, location names
-│  │  │  ├─ Edits existing dashboard message (or creates if new)
-│  │  │  └─ Runs continuously after each action (real-time updates)
-│  │  │
-│  │  └─ create_progress_bar(current, max, width=10):
-│  │     └─ Returns text-based bar: [████░░░░░]
-│  │
-│  ├─ map_generator.py: Sinh map procedurally (UNCHANGED)
-│  │  ├─ MapNode class: id, room_type, description, connections, entities, events
-│  │  ├─ MapStructure class: scenario_name, nodes dict, start_node_id
-│  │  └─ generate_map_structure(scenario_file): Tạo map từ config
-│  │
-│  ├─ background_service.py: Player profile & stats (UNCHANGED)
-│  │  ├─ load_backgrounds(): Tải từ data/backgrounds.json
-│  │  ├─ generate_random_background(): Random background
-│  │  └─ create_player_profile(scenario_type): Profile khi join
-│  │
-│  └─ scenario_generator.py: Sinh diễn biến qua AI (OPTIONAL - Future use)
-│
-└─ data/ 📊 DỮ LIỆU GAME
-   ├─ backgrounds.json: Danh sách professions
-   │  └─ Các background sẵn có (police, doctor, student, etc)
-   │  └─ Format: [{id, name, description, stats}]
-   │
-   ├─ scenarios/: 12 kịch bản khác nhau
-   │  ├─ asylum.json (Bệnh viện tâm thần)
-   │  ├─ factory.json (Nhà máy cũ kỹ)
-   │  ├─ ghost_village.json (Làng hoang vắng)
-   │  ├─ cursed_mansion.json (Lâu đài bị nguyền)
-   │  ├─ mine.json (Mỏ than sâu)
-   │  ├─ prison.json (Nhà tù cũ)
-   │  ├─ abyss.json (Vực thẳm)
-   │  ├─ dead_forest.json (Rừng chết)
-   │  ├─ research_hospital.json (Bệnh viện nghiên cứu)
-   │  ├─ ghost_ship.json (Chiếc tàu bỏ hoang)
-   │  ├─ hotel.json (Khách sạn ma ám)
-   │  └─ hospital.json (Bệnh viện thường)
-   │  └─ Format JSON: {rooms, monsters, items, events, difficulty, etc}
-   │
-   ├─ descriptions/:
-   │  ├─ rooms.txt: Mô tả room dùng cho procedural generation
-   │  └─ smells.txt: Mô tả mùi cảm giác môi trường
-   │
-   └─ entities/: NPC/Creature database
-      ├─ creatures.txt: Quái vật có thể gặp
-      └─ ghosts.txt: Các con ma/thần thoại
+## 2. Kiến trúc
 
-================================================================================
-🎮 GAME FLOW (Quy trình chơi - Free-Form Per-User Architecture)
-================================================================================
+Dự án được xây dựng trên một kiến trúc 4 lớp rõ ràng:
 
-1. SETUP PHASE (Admin)
-   User: /setup [category]
-   Bot: Lưu category_id vào game_setups table (guild-specific)
-   
-2. CREATE GAME PHASE (3-TIER CHANNELS)
-   User: /newgame [scenario]
-   Bot:
-   ├─ Kiểm tra admin setup tồn tại
-   ├─ Tạo Category nếu cần
-   ├─ Tier 1 - Lobby Channel: Lore + START button
-   │  └─ Mô tả kịch bản, tất cả players xem lore
-   ├─ Tier 2 - Dashboard Channel: Read-only stats
-   │  └─ Edits in-place, real-time player stats (HP, Sanity, Location)
-   ├─ Sinh map structure, lưu game_maps (game_id UUID)
-   ├─ Sinh 20 quy tắc (10 public, 10 hidden)
-   ├─ Thêm creator như player đầu tiên (is_ready = 0)
-   └─ Gửi join menu với START button
+1.  **Lớp Trình bày (Presentation Layer):**
+    *   **Thành phần:** `discord.py` và các `cogs`.
+    *   **Mô tả:** Xử lý mọi tương tác với người dùng qua Discord (slash commands, buttons, messages).
+    *   **File chính:** `main.py`, `cogs/game_commands.py`.
 
-3. PLAYER JOIN & START PHASE
-   User: Nhấn START button trong lobby
-   Bot:
-   ├─ Tạo Tier 3 - Private Channel: private-[player-name]-[random]
-   ├─ Update players.private_channel_id, is_ready = 1
-   ├─ Send welcome message + initial scene description
-   ├─ Initialize llm_conversation_history = []
-   └─ Ready để nhận free-text actions
+2.  **Lớp Logic Nghiệp vụ (Business Logic Layer):**
+    *   **Thành phần:** Các "services" trong `horror_bot/services`.
+    *   **Mô tả:** Bộ não của ứng dụng, xử lý toàn bộ logic của trò chơi.
+        *   `game_engine.py`: Điều phối chính, xử lý và chấm điểm hành động của người chơi.
+        *   `llm_service.py`: Cầu nối duy nhất đến LLM, chịu trách nhiệm gọi và xử lý output từ model.
+    *   **File chính:** `services/game_engine.py`, `services/llm_service.py`.
 
-4. FREE-FORM ACTION PHASE (CONTINUOUS)
-   User: Types "Tôi tìm kiếm quanh phòng" trong private channel
-   Bot:
-   ├─ on_message listener intercepts
-   ├─ Call process_free_text_action() với full context
-   ├─ LLM processes action (per-user isolated context):
-   │  └─ Receives: location desc, inventory, stats, last 5 messages history
-   ├─ Update database: hp, sanity, location, inventory, conversation_history
-   ├─ Check for encounters: get_players_at_location()
-   │  └─ If 2+ players at same location => generate_encounter()
-   │  └─ Send encounter message to all players at location
-   ├─ Update real-time dashboard (edit single message)
-   └─ Send response to player's private channel (embed + stats delta)
+3.  **Lớp Chỉ dẫn AI (AI Prompt Layer):**
+    *   **Thành phần:** Thư mục `horror_bot/prompts`.
+    *   **Mô tả:** Chứa các file `.txt` đóng vai trò là các mẫu chỉ dẫn (prompt templates) cho LLM. Việc tách prompt ra khỏi code giúp dễ dàng tinh chỉnh hành vi của AI.
+        *   `generate_dark_rules.txt`: Yêu cầu LLM tạo ra bộ 10 quy tắc công khai và 10 quy tắc ngầm dưới dạng JSON.
+        *   `check_rule_violation.txt`: Yêu cầu LLM phán xét xem hành động của người chơi có vi phạm quy tắc ngầm không.
+    *   **File chính:** `prompts/*.txt`.
 
-5. ENCOUNTER SYSTEM (AUTOMATIC)
-   When 2+ players at same location:
-   ├─ Detect from get_players_at_location(game_id, location_id)
-   ├─ Generate LLM encounter text
-   ├─ Send encounter message to both players' private channels
-   ├─ Record to player_encounters table
-   └─ Can lead to cooperative or conflicting outcomes (LLM decides)
+4.  **Lớp Dữ liệu & Nội dung (Data & Content Layer):**
+    *   **Thành phần:** Database (`aiosqlite`) và thư mục `horror_bot/data`.
+    *   **Mô tả:**
+        *   **Database:** `db_manager.py` quản lý database SQLite. `schema.sql` định nghĩa cấu trúc các bảng, bao gồm `game_rules` để lưu các quy tắc cho mỗi ván chơi.
+        *   **Nội dung Game (`data/`):** Chứa toàn bộ nội dung tĩnh của game, giúp dễ dàng chỉnh sửa mà không cần can thiệp vào code.
+            *   `data/scenarios/*.json`: Định nghĩa cấu trúc bản đồ, các phòng và mối liên kết.
+            *   `data/entities/*.txt`: Danh sách các loại sinh vật, ma quỷ có thể xuất hiện.
+            *   `data/lore/{scenario_name}/`: **(Mới)** Mỗi kịch bản có một thư mục riêng chứa:
+                *   `greeting.txt`: Một câu chào ngắn, giới thiệu nhanh về bối cảnh.
+                *   `lore.txt`: Đoạn văn lore chi tiết, được dùng làm nội dung dự phòng (fallback) khi LLM không thể tạo lore mới.
 
-6. ENDGAME PHASE
-   Creator: /endgame => End immediately + cleanup
-   Player: /endgame => Vote (50%+ to pass) + cleanup on pass
-   Cleanup:
-   ├─ Stop all listeners
-   ├─ Delete từ active_games, players, game_maps, game_rules, game_context
-   ├─ Delete all 3-tier channels
-   └─ Return to waiting for next game
+## 3. Luồng hoạt động
 
-================================================================================
-🔑 KEY MECHANICS - Per-User Architecture
-================================================================================
+1.  **Bắt đầu game (`/newgame`):**
+    *   `game_commands.py` tạo `game_id` và các kênh Discord.
+    *   **Lấy Lời chào:** `llm_service.generate_simple_greeting()` được gọi. Hàm này sẽ đọc trực tiếp file `data/lore/{scenario}/greeting.txt` để lấy lời chào nhanh.
+    *   **Sinh Quy tắc:** `llm_service.generate_dark_rules()` được gọi để LLM tạo ra 20 quy tắc (10 công khai, 10 ngầm) và lưu vào database.
+    *   10 quy tắc công khai được hiển thị cho người chơi.
+    *   **Sinh Lore chi tiết (nền):** `llm_service.generate_world_lore()` được gọi. Hàm này sẽ dùng LLM để tạo lore mới, nhưng nếu thất bại, nó sẽ đọc nội dung từ file `data/lore/{scenario}/lore.txt` làm phương án dự phòng.
 
-3-TIER CHANNEL SYSTEM (Solves Context Length Issues):
-├─ Tier 1 (Lobby):
-│  ├─ Shared lore, scenario description
-│  ├─ Join interface, player list
-│  └─ Visible to all players in game
-├─ Tier 2 (Dashboard):
-│  ├─ Real-time stats (HP, Sanity, Location for each player)
-│  ├─ Single message edited continuously
-│  ├─ Read-only (prevents chat spam)
-│  └─ System updates automatically after each action
-└─ Tier 3 (Private Per-User):
-   ├─ Each player has own private-[name]-[id] channel
-   ├─ Free-form text actions
-   ├─ Per-user LLM conversation history (10-message rolling window)
-   ├─ Individual scene descriptions and action results
-   └─ Encounter messages when meeting other players
+2.  **Người chơi hành động:**
+    *   Người chơi gõ lệnh vào kênh riêng.
+    *   `game_engine.py` nhận lệnh và bắt đầu quy trình xử lý 2 bước với LLM:
+        1.  **Mô tả kết quả:** Gọi `llm_service.process_player_action()` để LLM mô tả chuyện gì xảy ra.
+        2.  **Phán xét vi phạm:** Gọi `llm_service.check_rule_violation()` để LLM thứ hai (trong vai trò giám khảo) quyết định xem hành động đó có vi phạm quy tắc ngầm nào không.
+    *   Nếu có vi phạm, người chơi sẽ bị trừ điểm Sanity (tỉnh táo) và nhận được một thông báo ẩn ý.
 
-PER-USER LLM CONVERSATION HISTORY (10-Message Rolling Window):
-├─ Stored in players.llm_conversation_history (JSON)
-├─ Format: [{role: "user"|"assistant", content: text}]
-├─ Function append_to_llm_history(user_id, game_id, role, message):
-│  └─ Adds message, keeps last 10 (old messages discarded)
-├─ Benefits:
-│  ├─ Prevents context overflow (vs shared 1000-message history)
-│  ├─ Per-user memory prevents cross-player state leakage
-│  ├─ LLM can reference recent actions ("You just found a key...")
-│  └─ CPU-efficient (8192 context token window plenty for 10 messages)
-└─ Used in llm_service.process_player_action():
-   └─ Builds prompt with last 5 messages for context
+## 4. Cài đặt và Chạy
 
-FREE-FORM TEXT ACTIONS (Natural Language Processing):
-├─ Player types arbitrary action: "Tôi tìm kiếm...", "Tôi tấn công...", etc
-├─ LLM processes with system prompt tailored to:
-│  ├─ Current scenario type
-│  ├─ Current location description
-│  ├─ Player inventory, stats
-│  └─ Recent action history (last 5 messages)
-├─ LLM returns JSON:
-│  ├─ success (bool): Did action succeed?
-│  ├─ description (str): What happened?
-│  ├─ hp_change (int): Damage/healing
-│  ├─ sanity_change (int): Sanity delta
-│  ├─ new_location_id (str): Did player move?
-│  └─ discovered_items (list): Any items found?
-└─ No button constraints, player creativity rewarded
-
-AUTOMATIC ENCOUNTER DETECTION:
-├─ After each action, check get_players_at_location(game_id, location_id)
-├─ If 2+ players (hp > 0) at same location:
-│  ├─ Generate encounter scenario via LLM
-│  ├─ Determine if cooperative or hostile
-│  ├─ Send message to both players' private channels
-│  └─ Record to player_encounters table
-├─ Can happen spontaneously (no manual trigger needed)
-└─ Encourages emergent multiplayer moments
-
-REAL-TIME DASHBOARD UPDATES:
-├─ Single message per game in dashboard channel
-├─ After each action, update_game_dashboard() re-renders:
-│  ├─ All players' current locations
-│  ├─ HP bars [████░░░░]
-│  ├─ Sanity bars [████████░░]
-│  ├─ Status (alive/dead/left)
-│  └─ Last action timestamp
-├─ Edits in-place (no new message spam)
-├─ Players see others' status in real-time
-
-CONVERSATION HISTORY MANAGEMENT:
-├─ Per-user isolated history prevents context leakage
-├─ Rolling 10-message window:
-│  ├─ Message 1: "I enter a dark room"
-│  ├─ Message 2: "I search for items"
-│  ├─ ...
-│  ├─ Message 10: "I open a chest"
-│  ├─ Message 11: (old message 1 deleted, new message added)
-│  └─ Max keeps last 10
-├─ Allows LLM to reference context:
-│  ├─ "You already found a key in the previous room"
-│  ├─ "You're getting tired from running"
-│  └─ Without information explosion
-
-================================================================================
-⚙️ TECHNICAL ARCHITECTURE
-================================================================================
-
-ASYNC/AWAIT PATTERN:
-├─ Toàn bộ bot sử dụng asyncio
-├─ aiosqlite for non-blocking database access
-├─ asyncio.wait_for() cho LLM timeout (30s)
-├─ Per-player message listeners don't block main event loop
-
-DATABASE DESIGN:
-├─ aiosqlite (SQLite async driver)
-├─ 7 tables: active_games, game_setups, game_maps, players, game_rules,
-│            game_context, player_encounters
-├─ Key fields:
-│  ├─ game_id: UUID (primary key, not channel_id)
-│  ├─ players.private_channel_id: Tier 3 channel ID (per-user)
-│  ├─ players.llm_conversation_history: JSON rolling 10-message history
-│  ├─ active_games.dashboard_message_id: For in-place edits
-│  └─ player_encounters.player_ids: JSON array for encounter tracking
-├─ Transactions: await db.commit() for atomic updates
-
-LLM INTEGRATION (PER-USER ISOLATED):
-├─ Model: Qwen-1.5B GGUF (4.5GB)
-├─ Library: llama-cpp-python
-├─ Context: 8192 tokens (larger for future expansion)
-├─ Loading: load_llm() once in main.py on_ready()
-├─ Per-Player System Prompt:
-│  ├─ Scenario context (hospital, ghost village, etc)
-│  ├─ Current location description (from map)
-│  ├─ Player stats (hp, sanity, agi, acc)
-│  ├─ Inventory items
-│  ├─ Conversation history (last 5 messages)
-│  └─ Ensures each player gets tailored responses
-├─ Output Format: JSON with success, description, stat changes, etc
-├─ Timeout: 30 seconds with graceful fallback
-
-UI/UX DESIGN:
-├─ No emoji reactions (pure natural language)
-├─ Plain text private channels (free-form input)
-├─ Real-time dashboard updates (single edited message)
-├─ Embeds for action results (stats delta, description)
-├─ Text chunking (<2000 char limit Discord)
-├─ No turn-based waiting (continuous free-form play)
-
-DISCORD.PY STRUCTURE:
-├─ Cogs pattern (game_commands, admin_commands, game_ui)
-├─ Slash commands (/ prefix)
-├─ on_message event listener (for free-text action routing)
-├─ Per-channel context (each player's private channel)
-├─ Permission checks (create channels, manage roles)
-├─ Message content intent required (intents.message_content = True)
-
-STATE MANAGEMENT:
-├─ Database as source of truth
-├─ No in-memory TurnManager (continuous play, no turns)
-├─ Stateless message handlers (all state in DB)
-├─ Per-user context: private_channel_id + llm_conversation_history
-
-================================================================================
-📊 DATA FLOW DIAGRAM (Free-Form Action Pipeline)
-================================================================================
-
-User Types in Private Channel
-    ↓
-on_message Event Listener (game_commands.py)
-    ↓
-Fetch Player Context (db_manager)
-    ├─ Current location, inventory, stats
-    └─ Conversation history (last 10 messages)
-    ↓
-LLM Inference (llm_service.process_player_action)
-    ├─ System prompt (scenario + location + stats)
-    ├─ Input: action text + conversation context
-    └─ Output: JSON {success, description, hp_change, sanity_change, new_location, items}
-    ↓
-Database Update (db_manager - ATOMIC)
-    ├─ Update stats (hp, sanity, clamped 0-100)
-    ├─ Update location
-    ├─ Append to conversation history (rolling 10 messages)
-    └─ Record action_result
-    ↓
-Encounter Check
-    ├─ Query get_players_at_location()
-    └─ If 2+: Generate encounter, send to both players
-    ↓
-Dashboard Update (game_engine.update_game_dashboard)
-    └─ Edit dashboard message with all players' stats
-    ↓
-Response to Player
-    └─ Send embed to private channel with description + stats delta
-    ↓
-User sees Result in Private Channel + Dashboard Updates
-
-================================================================================
-🛠️ DEPENDENCIES & REQUIREMENTS
-================================================================================
-
-1. discord.py (2.0+)
-   └─ Discord API wrapper, message intents, on_message events
-
-2. python-dotenv
-   └─ Load DISCORD_TOKEN, LLM_MODEL_PATH từ .env
-
-3. aiosqlite
-   └─ Async SQLite driver, non-blocking queries
-
-4. llama-cpp-python
-   └─ Local LLM inference (Qwen-1.5B GGUF)
-
-5. huggingface-hub
-   └─ Download models từ Hugging Face
-
-Python version: 3.9+ (asyncio, type hints, f-strings)
-
-================================================================================
-💡 DESIGN DECISIONS & OPTIMIZATIONS
-================================================================================
-
-1. 3-TIER CHANNEL ARCHITECTURE:
-   ✓ Tier 1 (Lobby): Shared lore prevents duplication
-   ✓ Tier 2 (Dashboard): Read-only prevents accidental chat
-   ✓ Tier 3 (Private): Per-user isolation prevents context leakage
-   └─ Result: Scalable to many players without token explosion
-
-2. PER-USER CONVERSATION HISTORY (10-MESSAGE WINDOW):
-   ✓ Context management without memory inflation
-   ✓ Individual player context prevents cross-talk
-   ✓ LLM can still reference recent actions
-   └─ Result: 8192 token context never exceeded, CPU-efficient
-
-3. FREE-FORM TEXT ACTIONS:
-   ✓ Natural language > rigid button menus
-   ✓ Encourages creative problem-solving
-   ✓ LLM processes intent directly
-   └─ Result: More engaging, replayable gameplay
-
-4. AUTOMATIC ENCOUNTER DETECTION:
-   ✓ Location-based triggers (location_id matching)
-   ✓ No manual intervention needed
-   ✓ LLM generates dynamic interactions
-   └─ Result: Emergent multiplayer moments
-
-5. REAL-TIME DASHBOARD (Single Edited Message):
-   ✓ No message spam in dashboard channel
-   ✓ Updates visible immediately
-   ✓ Discord rate-limit friendly (edit < create)
-   └─ Result: Clean UI, fast feedback
-
-6. DATABASE AS SOURCE OF TRUTH:
-   ✓ Stateless message handlers
-   ✓ Bot restart safety (all state persisted)
-   ✓ Multi-process capable (future scaling)
-   └─ Result: Reliable, crash-resistant
-
-================================================================================
-🚀 HOW TO RUN (Updated for Free-Form Architecture)
-================================================================================
-
-1. Install dependencies:
-   pip install -r requirements.txt
-
-2. Download model:
-   python download_model.py
-
-3. Setup .env:
-   DISCORD_TOKEN=your_token_here
-   LLM_MODEL_PATH=/path/to/model.gguf
-   LLM_N_THREADS=4
-   LLM_CONTEXT_SIZE=8192
-
-4. Update main.py to load v4 cogs:
-   await bot.load_extension("cogs.game_commands")  # Now uses game_commands v4
-
-5. Run bot:
-   python main.py
-
-6. In Discord:
-   - Admin: /setup [category]
-   - User: /newgame [scenario]
-   - User: Click START button (creates Tier 3 private channel)
-   - User: Type free-form action in private channel
-   - Example actions:
-     • "Tôi tìm kiếm quanh phòng"
-     • "Tôi tấn công con quái"
-     • "Tôi chạy về phía cửa"
-   - User: /endgame to end game
-
-================================================================================
-📝 NOTES
-================================================================================
-
-✓ Bot cần permission: Create Channels, Manage Roles, Send Messages, Read Message History
-✓ SQLite được sử dụng vì project là small-scale local
-✓ LLM chạy CPU-only (no GPU)
-✓ Free-form text actions thay vì button menus (more natural)
-✓ Per-user sessions prevent context overflow (critical for group games)
-✓ Conversation history rolling window (10 messages) balances memory vs context
-✓ Automatic encounter detection creates emergent multiplayer
-✓ Real-time dashboard keeps UI clean (single edited message)
-✓ Database atomic updates ensure consistency (no partial failures)
-
-================================================================================
+Quy trình cài đặt không thay đổi:
+1.  Tạo và kích hoạt môi trường ảo (`.venv`).
+2.  Cài đặt thư viện: `pip install -r horror_bot/requirements.txt`.
+3.  Tải Model LLM: `python horror_bot/download_model.py`.
+4.  Tạo file `.env` trong `horror_bot/` và thêm `DISCORD_BOT_TOKEN`.
+5.  Chạy Bot: `python horror_bot/main.py`.

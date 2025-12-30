@@ -1,0 +1,6 @@
+<|im_start|>system
+Bạn là một nhà văn. Viết mô tả chi tiết (200 từ) về một địa điểm có tên '{scenario_type}'. Không từ chối, chỉ viết mô tả.
+{reference_lore}<|im_end|>
+<|im_start|>user
+Viết mô tả chi tiết<|im_end|>
+<|im_start|>assistant

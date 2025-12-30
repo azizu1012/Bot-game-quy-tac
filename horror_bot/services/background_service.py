@@ -85,7 +85,7 @@ def randomize_stats_with_variation(base_stats: dict, variation_percent: float = 
     return result
 
 async def generate_background_description(background_name: str, scenario_type: str) -> str:
-    """Dùng AI để generate mô tả về background của người chơi.
+    """Generate background description (simplified - no LLM for speed).
     
     Args:
         background_name: Tên background (vd: 'Police Officer')
@@ -94,16 +94,16 @@ async def generate_background_description(background_name: str, scenario_type: s
     Returns:
         str: Đoạn mô tả sinh động
     """
-    keywords = [background_name, scenario_type, "khủng khiếp", "sợ hãi", "sinh tồn"]
+    # Simplified descriptions - no LLM call to speed up game creation
+    descriptions = {
+        "Police Officer": f"Cảnh sát, huấn luyện tốt, quen với nguy hiểm, nhưng {scenario_type} vẫn vượt xa tưởng tượng.",
+        "Doctor": f"Bác sĩ, khám phá sự sống và cái chết, nhưng {scenario_type} là thứ gì đó hoàn toàn khác.",
+        "Student": f"Sinh viên, trẻ trung nhưng không chuẩn bị, {scenario_type} sẽ thử thách lòng can đảm.",
+        "Journalist": f"Nhà báo, tò mò và thích tìm sự thật, nhưng {scenario_type} ẩn giấu những bí mật kinh hoàng.",
+        "Survivor": f"Người sống sót, đã trải qua nhiều khó khăn, {scenario_type} là thách thức tiếp theo."
+    }
     
-    prompt = f"""Hãy viết một đoạn mô tả ngắn (dưới 30 từ) về cách {background_name} thích ứng với kịch bản {scenario_type}. Giọng u ám, huyền bí."""
-    
-    try:
-        description = await llm_service.describe_scene(keywords)
-        return description if description else f"{background_name} là lựa chọn của bạn trong cuộc phiêu lưu này."
-    except Exception as e:
-        print(f"⚠️ Lỗi generate description: {e}")
-        return f"{background_name} là lựa chọn của bạn trong cuộc phiêu lưu này."
+    return descriptions.get(background_name, f"{background_name} bước vào {scenario_type} với những hy vọng mong manh.")
 
 async def create_player_profile(scenario_type: str) -> dict:
     """Tạo profile hoàn chỉnh cho một người chơi mới.

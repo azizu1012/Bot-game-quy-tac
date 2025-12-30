@@ -8,6 +8,11 @@
   "min_rooms_per_floor": 6,
   "max_rooms_per_floor": 12,
   "atmosphere": "Tiếng bánh xe xoay vẫn kêu hạ, khí gas độc từ lò luyện thoát ra, những bóng đen lơ lửng",
+  "objectives": [
+    "Tắt được các máy móc chạy liên tục",
+    "Tìm ra căn phòng điều khiển chính",
+    "Thoát khỏi khu nhà máy mà không bị chuỗi dây quấn"
+  ],
   "spawn_creatures": [
     "thợ_công_nhân_ma",
     "quỷ_máy_xoay",

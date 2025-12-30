@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -17,29 +18,17 @@ class AdminCommands(commands.Cog):
         self.bot = bot
         self.moderators = set()  # Store moderator IDs in memory (TODO: persist to DB)
 
-    async def is_admin_or_owner(self, interaction: discord.Interaction) -> bool:
-        """Check if user is bot owner, server owner, or hardcoded admin."""
+    async def is_admin(self, interaction: discord.Interaction) -> bool:
+        """Check if user is the hardcoded admin (ADMIN_ID from .env)."""
         user_id = interaction.user.id
-        guild_owner_id = interaction.guild.owner_id if interaction.guild else None
-        
-        # Check: Bot owner
-        app_info = await self.bot.application_info()
-        if app_info.owner_id == user_id:
-            return True
-        
-        # Check: Hardcoded admin
-        if ADMIN_ID != 0 and ADMIN_ID == user_id:
-            return True
-        
-        # Check: Server owner
-        if guild_owner_id and guild_owner_id == user_id:
-            return True
-        
-        # Check: Server admin permission
-        if interaction.user.guild_permissions.administrator:
-            return True
-        
-        return False
+        return ADMIN_ID != 0 and ADMIN_ID == user_id
+    
+    async def is_admin_or_moderator(self, interaction: discord.Interaction) -> bool:
+        """Check if user is admin or moderator."""
+        user_id = interaction.user.id
+        is_admin = ADMIN_ID != 0 and ADMIN_ID == user_id
+        is_mod = user_id in self.moderators
+        return is_admin or is_mod
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -74,10 +63,10 @@ class AdminCommands(commands.Cog):
         """Setup config để bot có thể tạo game rooms."""
         await interaction.response.defer()
         
-        # Check permission
-        if not await self.is_admin_or_owner(interaction):
+        # Check permission - ONLY hardcoded ADMIN_ID
+        if not await self.is_admin(interaction):
             await interaction.followup.send(
-                "❌ Bạn không có quyền sử dụng lệnh này. Chỉ Admin, Server Owner, hoặc hardcoded Admin mới có thể dùng.",
+                f"❌ Bạn không có quyền sử dụng lệnh này. Chỉ Admin ID {ADMIN_ID} mới có thể dùng.",
                 ephemeral=True
             )
             return
@@ -121,8 +110,8 @@ class AdminCommands(commands.Cog):
     async def show_db(self, interaction: discord.Interaction, table: app_commands.Choice[str]):
         """Hiển thị tất cả hàng từ một bảng cơ sở dữ liệu."""
         
-        # Check permission
-        if not await self.is_admin_or_owner(interaction):
+        # Check permission - Admin only
+        if not await self.is_admin(interaction):
             await interaction.response.send_message(
                 "❌ Bạn không có quyền sử dụng lệnh này.",
                 ephemeral=True
@@ -158,8 +147,8 @@ class AdminCommands(commands.Cog):
     async def add_moderator(self, interaction: discord.Interaction, user: discord.User):
         """Thêm user vào danh sách moderator."""
         
-        # Check permission
-        if not await self.is_admin_or_owner(interaction):
+        # Check permission - Admin only
+        if not await self.is_admin(interaction):
             await interaction.response.send_message(
                 "❌ Bạn không có quyền sử dụng lệnh này.",
                 ephemeral=True
@@ -177,8 +166,8 @@ class AdminCommands(commands.Cog):
     async def remove_moderator(self, interaction: discord.Interaction, user: discord.User):
         """Gỡ user khỏi danh sách moderator."""
         
-        # Check permission
-        if not await self.is_admin_or_owner(interaction):
+        # Check permission - Admin only
+        if not await self.is_admin(interaction):
             await interaction.response.send_message(
                 "❌ Bạn không có quyền sử dụng lệnh này.",
                 ephemeral=True
@@ -202,8 +191,8 @@ class AdminCommands(commands.Cog):
     async def moderator_list(self, interaction: discord.Interaction):
         """Xem danh sách moderator hiện tại."""
         
-        # Check permission
-        if not await self.is_admin_or_owner(interaction):
+        # Check permission - Admin only
+        if not await self.is_admin(interaction):
             await interaction.response.send_message(
                 "❌ Bạn không có quyền sử dụng lệnh này.",
                 ephemeral=True
@@ -231,6 +220,131 @@ class AdminCommands(commands.Cog):
     def is_moderator(self, user_id: int) -> bool:
         """Check if user is a moderator."""
         return user_id in self.moderators
+    
+    @app_commands.command(name="forcestop", description="⛔ [Admin/Mod] Cưỡng chế đóng một game")
+    async def force_stop_game(self, interaction: discord.Interaction):
+        """Cưỡng chế đóng một trò chơi với menu chọn (chỉ Admin hoặc Moderator)."""
+        await interaction.response.defer()
+        
+        # Check permission - Admin or Moderator only
+        if not await self.is_admin_or_moderator(interaction):
+            await interaction.followup.send(
+                "❌ Bạn không có quyền sử dụng lệnh này. Chỉ Admin hoặc Moderator mới được dùng.",
+                ephemeral=True
+            )
+            return
+        
+        # Get all active games
+        games = await db_manager.execute_query(
+            "SELECT channel_id, game_code, scenario_type, host_id FROM active_games WHERE is_active = 1",
+            fetchall=True
+        )
+        
+        if not games:
+            await interaction.followup.send("❌ Không có game nào đang chạy!", ephemeral=True)
+            return
+        
+        # Create select menu with all games
+        class GameSelect(discord.ui.View):
+            def __init__(self_view):
+                super().__init__(timeout=60)
+                
+                options = [
+                    discord.SelectOption(
+                        label=f"{game['game_code']} ({game['scenario_type']})",
+                        value=game['channel_id'],
+                        description=f"Host: <@{game['host_id']}>"
+                    )
+                    for game in games[:25]  # Discord limit: 25 options
+                ]
+                
+                select = discord.ui.Select(
+                    placeholder="Chọn game để tắt...",
+                    options=options
+                )
+                select.callback = self_view.select_callback
+                self_view.add_item(select)
+            
+            async def select_callback(self_view, select_interaction: discord.Interaction):
+                game_id = select_interaction.data['values'][0]
+                await select_interaction.response.defer()
+                
+                # Get game details
+                game = await db_manager.execute_query(
+                    "SELECT game_code, lobby_channel_id, dashboard_channel_id FROM active_games WHERE channel_id = ?",
+                    (game_id,),
+                    fetchone=True
+                )
+                
+                user_name = interaction.user.name
+                is_admin = await self.is_admin(interaction)
+                role = "Admin" if is_admin else "Moderator"
+                
+                print(f"\n⛔ [FORCESTOP] {role} {user_name} (ID: {interaction.user.id}) stopped game {game['game_code']}")
+                
+                try:
+                    # Get all players and delete their private channels
+                    players = await db_manager.execute_query(
+                        "SELECT private_channel_id FROM players WHERE game_id = ?",
+                        (game_id,),
+                        fetchall=True
+                    )
+                    
+                    for player in players:
+                        if player['private_channel_id']:
+                            try:
+                                channel = self.bot.get_channel(int(player['private_channel_id']))
+                                if channel:
+                                    await channel.delete(reason=f"Game forcefully stopped by {role} {user_name}")
+                            except Exception as e:
+                                print(f"   ⚠️ Error deleting private channel: {e}")
+                    
+                    # Delete lobby and dashboard channels
+                    for channel_id in [game['lobby_channel_id'], game['dashboard_channel_id']]:
+                        if channel_id:
+                            try:
+                                channel = self.bot.get_channel(int(channel_id))
+                                if channel:
+                                    await channel.delete(reason=f"Game forcefully stopped by {role} {user_name}")
+                            except Exception as e:
+                                print(f"   ⚠️ Error deleting channel: {e}")
+                    
+                    # Delete from database
+                    await db_manager.execute_query(
+                        "DELETE FROM players WHERE game_id = ?",
+                        (game_id,),
+                        commit=True
+                    )
+                    await db_manager.execute_query(
+                        "DELETE FROM active_games WHERE channel_id = ?",
+                        (game_id,),
+                        commit=True
+                    )
+                    await db_manager.execute_query(
+                        "DELETE FROM game_maps WHERE game_id = ?",
+                        (game_id,),
+                        commit=True
+                    )
+                    
+                    print(f"✅ [FORCESTOP] Game {game['game_code']} deleted!\n")
+                    
+                    await select_interaction.followup.send(
+                        f"✅ Đã cưỡng chế đóng game `{game['game_code']}`!\n"
+                        f"👤 Thực hiện bởi: {role} {user_name}",
+                        ephemeral=False
+                    )
+                except Exception as e:
+                    print(f"❌ Error in forcestop: {e}")
+                    await select_interaction.followup.send(
+                        f"❌ Lỗi khi cưỡng chế đóng game: {e}",
+                        ephemeral=True
+                    )
+        
+        await interaction.followup.send(
+            "⛔ **Chọn game để tắt:**",
+            view=GameSelect(),
+            ephemeral=True
+        )
 
 
 async def setup(bot: commands.Bot):
